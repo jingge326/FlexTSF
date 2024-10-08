@@ -17,7 +17,7 @@ Developing a foundation model for time series forecasting presents significant c
 
 <!-- ![Illustration of time series from different domains with domain diversity and structural diversity.] -->
 <p align="center">
-    <img src="images/different_time_series.png" width="300" align="center">
+    <img src="images/different_time_series.png" width="400" align="center">
 </p>
 
 To cover diverse domains and handle variable regularities, we propose **FlexTSF**, a universal time series forecasting model that possesses better generalization and natively support both regular and irregular time series. FlexTSF produces forecasts in an autoregressive manner and incorporates three novel designs:
@@ -30,7 +30,7 @@ Experiments on $12$ datasets show that FlexTSF outperforms state-of-the-art fore
 
 <!-- ![FlexTSF idea] -->
 <p align="center">
-    <img src="images/FlexTSF.png" width="500" align="center">
+    <img src="images/FlexTSF.png" width="600" align="center">
 </p>
 
 ## 1. Requirements
