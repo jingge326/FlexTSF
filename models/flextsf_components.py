@@ -1,5 +1,5 @@
 import math
-from typing import Optional, Tuple
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -200,9 +200,9 @@ class SolverWrapper(nn.Module):
 
 def build_ivp_solver(args):
     ivp_solver = None
-    hidden_dims = [args.hidden_dim] * args.hidden_layers
+    hidden_dims = [args.dim_ivp_hidden] * args.hidden_layers
     if args.ivp_solver == 'ode':
-        ivp_solver = SolverWrapper(ODEModel(args.n_embd, args.odenet, hidden_dims, args.activation,
+        ivp_solver = SolverWrapper(ODEModel(args.dim_patch_ts, args.odenet, hidden_dims, args.activation,
                                             args.final_activation, args.ode_solver, args.solver_step, args.atol, args.rtol))
     else:
         if args.ivp_solver == 'couplingflow':
@@ -215,7 +215,7 @@ def build_ivp_solver(args):
             raise NotImplementedError
 
         ivp_solver = SolverWrapper(flow(
-            args.dim_ts_internal, args.flow_layers, hidden_dims, args.time_net, args.time_hidden_dim))
+            args.dim_patch_ts, args.flow_layers, hidden_dims, args.time_net, args.time_hidden_dim))
     return ivp_solver
 
 
@@ -226,15 +226,15 @@ class IVP_Patcher(nn.Module):
         self.process = process
         if process == "in":
             self.z_mapper_in = nn.Linear(
-                1, args.dim_ts_internal, bias=False)
+                1, args.dim_patch_ts, bias=False)
             self.ivp_solver_in = build_ivp_solver(args)
-            self.z2mu_mapper = Z_to_mu(args.dim_ts_internal)
-            self.z2std_mapper = Z_to_std(args.dim_ts_internal)
+            self.z2mu_mapper = Z_to_mu(args.dim_patch_ts)
+            self.z2std_mapper = Z_to_std(args.dim_patch_ts)
             self.register_buffer('mu', torch.tensor([args.prior_mu]))
             self.register_buffer('std', torch.tensor([args.prior_std]))
         else:
             self.z_mapper_out = nn.Linear(
-                args.dim_ts_internal, 1, bias=False)
+                args.dim_patch_ts, 1, bias=False)
             self.ivp_solver_out = build_ivp_solver(args)
 
     def forward(self, x, t, m=None, k_iwae=1, padding=False):
@@ -297,8 +297,8 @@ class Patcher(nn.Module):
             self.patch_in = IVP_Patcher(args, "in")
             self.patch_out = IVP_Patcher(args, "out")
         elif args.patch_module == "none":
-            self.patch_in = nn.Linear(1, args.dim_ts_internal)
-            self.patch_out = nn.Linear(args.dim_ts_internal, 1)
+            self.patch_in = nn.Linear(1, args.dim_patch_ts)
+            self.patch_out = nn.Linear(args.dim_patch_ts, 1)
         else:
             raise NotImplementedError
 
@@ -411,37 +411,38 @@ class AttentionBlock(nn.Module):
         """
         super().__init__()
         self.nhead = args.nhead
-        self.dim = args.n_embd
-        self.head_dim = args.n_embd // args.nhead
+        self.dim = args.dim_attn_internal
+        self.head_dim = args.dim_attn_internal // args.nhead
         self.feed_forward = FeedForward(
-            dim=args.n_embd,
-            hidden_dim=4 * args.n_embd,
+            dim=args.dim_attn_internal,
+            hidden_dim=4 * args.dim_attn_internal,
             multiple_of=args.multiple_of,
             ffn_dim_multiplier=None
         )
         self.layer_id = layer_id
-        self.attention_norm = RMSNorm(args.n_embd, eps=args.norm_eps)
-        self.ffn_norm = RMSNorm(args.n_embd, eps=args.norm_eps)
+        self.attention_norm = RMSNorm(
+            args.dim_attn_internal, eps=args.norm_eps)
+        self.ffn_norm = RMSNorm(args.dim_attn_internal, eps=args.norm_eps)
 
         self.args = args
         self.wq = nn.Linear(
-            args.dim_ts_internal,
+            args.dim_patch_ts,
             args.nhead * self.head_dim,
             bias=False,
         )
         self.wk = nn.Linear(
-            args.dim_ts_internal,
+            args.dim_patch_ts,
             self.nhead * self.head_dim,
             bias=False,
         )
         self.wv = nn.Linear(
-            args.dim_ts_internal,
+            args.dim_patch_ts,
             self.nhead * self.head_dim,
             bias=False,
         )
         self.wo = nn.Linear(
             args.nhead * self.head_dim,
-            args.dim_ts_internal,
+            args.dim_patch_ts,
             bias=False,
         )
 
@@ -537,13 +538,13 @@ class TransformerDecoder(nn.Module):
         self.n_layers = args.attn_layers
         if args.lyr_time_embed == False:
             self.states_in_lyr = InputEmbedding(
-                args.dim_ts_internal, args.embed_time, args.n_embd)
+                args.dim_patch_ts, args.embed_time, args.dim_attn_internal)
 
         self.layers = torch.nn.ModuleList()
         for layer_id in range(self.n_layers):
             self.layers.append(AttentionBlock(layer_id, args))
 
-        self.norm = RMSNorm(args.n_embd, eps=args.norm_eps)
+        self.norm = RMSNorm(args.dim_attn_internal, eps=args.norm_eps)
 
     def forward(self, hidden_states: torch.Tensor, timestamps: torch.Tensor, start_pos=0):
 
@@ -552,7 +553,7 @@ class TransformerDecoder(nn.Module):
         # Apply the layer-wise time embedding
         # Refering to the rotary position embedding
         if self.args.lyr_time_embed == True:
-            head_dim = self.args.n_embd // self.args.nhead
+            head_dim = self.args.dim_attn_internal // self.args.nhead
             freqs = 1.0 / (self.args.freqs_theta ** (torch.arange(0, head_dim, 2)
                                                      [: (head_dim // 2)].float() / head_dim))
             freqs = freqs.to(timestamps.device)

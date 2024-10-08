@@ -6,7 +6,7 @@ from experiments.utils_exp import compute_log_normal_pdf
 from models.flextsf_components import Patcher, TransformerDecoder, ValueNorm, TimeNorm
 
 
-class FlexTSFAB_General_Forecast(TransformerDecoder):
+class FlexTSF_General_Forecast(TransformerDecoder):
     def __init__(self, args):
         super().__init__(args)
         self.patcher = Patcher(args)
@@ -14,13 +14,13 @@ class FlexTSFAB_General_Forecast(TransformerDecoder):
             self.value_norm = ValueNorm(
                 num_features=1, affine=True, subtract_last=False)
             self.time_norm = TimeNorm(affine=self.args.time_norm_affine)
-            
+
         if args.leader_node == True:
             self.leaderlyr = nn.Sequential(
                 nn.Linear(6, 128),
                 nn.Tanh(),
-                nn.Linear(128, args.dim_ts_internal))
-            
+                nn.Linear(128, args.dim_patch_ts))
+
     def forecast(self, batch, k_iwae=1):
         # The beginning of time_in is 0 and the first element of time_out is bigger than the last element of time_in
         assert (batch["time_in"][..., 0] == 0).all() and (
@@ -37,7 +37,7 @@ class FlexTSFAB_General_Forecast(TransformerDecoder):
                 batch['time_in'], mask=exist_time_in)
             # also normalize time_out using the same t_unit_inst
             time_out = self.time_norm.normalize(batch["time_out"])
-            
+
             if self.args.leader_node == True:
                 # static features from the value normalization
                 ins_mean = ins_mean.view(-1, 1)
@@ -60,17 +60,18 @@ class FlexTSFAB_General_Forecast(TransformerDecoder):
                     t_unit_global = batch["time_unit"].view(-1, 1)
                 # concatenate all the static features
                 stat = torch.cat([gmean, gstd, ins_mean, ins_std, t_unit_inst, t_unit_global],
-                                dim=-1).unsqueeze(1)
+                                 dim=-1).unsqueeze(1)
                 batch['stat'] = stat
-                
+
         else:
             data_in = batch['data_in']
             time_in = batch["time_in"]
             time_out = batch["time_out"]
 
         time_in = time_in.repeat_interleave(batch['data_in'].size(-1), dim=0)
-        time_out = time_out.repeat_interleave(batch['data_out'].size(-1), dim=0)
-            
+        time_out = time_out.repeat_interleave(
+            batch['data_out'].size(-1), dim=0)
+
         ###### Patching ######
         # Channel independent. Time dimension at the end
         data_in = data_in.permute(0, 2, 1)
@@ -110,11 +111,11 @@ class FlexTSFAB_General_Forecast(TransformerDecoder):
         data_in = data_in.view(-1, num_patches_in, patch_len)
         mask_in = mask_in.view(-1, num_patches_in, patch_len)
         mask_out_tmp = mask_out.view(-1, num_patches_out, patch_len)
-        # Indicate which patch is empty. 
-        # Different time series samples or variables may have different lengths, 
+        # Indicate which patch is empty.
+        # Different time series samples or variables may have different lengths,
         # resulting in some empty patches in a batch of samples.
         exist_patch_in = mask_in.any(dim=-1)
-        
+
         # Align the timestamps of each patch
         oid_in = time_in[:, :, 0]
         oid_out = time_out[:, :, 0]
@@ -122,13 +123,15 @@ class FlexTSFAB_General_Forecast(TransformerDecoder):
         time_out = time_out - oid_out.unsqueeze(-1)
         t = oid_in
 
-        input_states, others = self.patcher.encode(data_in, time_in, mask_in, k_iwae)
+        input_states, others = self.patcher.encode(
+            data_in, time_in, mask_in, k_iwae)
 
         kl_loss_input = others["kldiv_z0_all"]
-        
+
         if self.args.dummy_patch == True:
             # Pad the end of the sequence with zero
-            padded_states, _ = self.patcher.encode(torch.zeros_like(data_in)[:, 0:1, :], -time_out[:, 0:1, :], None, k_iwae, padding=True)
+            padded_states, _ = self.patcher.encode(torch.zeros_like(
+                data_in)[:, 0:1, :], -time_out[:, 0:1, :], None, k_iwae, padding=True)
 
         # Adjust the shape of the data to match the number of samples in the generation part
         mask_in = mask_in.unsqueeze(0).repeat(k_iwae, 1, 1, 1)
@@ -145,7 +148,7 @@ class FlexTSFAB_General_Forecast(TransformerDecoder):
             input_states = torch.cat([leader, input_states], dim=-2)
             t = torch.cat([torch.ones_like(t[..., 0:1]) * -1, t], dim=-1)
 
-        # A batch of time series may have different lengths, resulting in different numbers of non-empty patches. 
+        # A batch of time series may have different lengths, resulting in different numbers of non-empty patches.
         # exist_edge_patch_in indicates the location of the first empty patch.
         exist_last = torch.cat(
             [exist_patch_in[:, :, 1:], torch.zeros_like(exist_patch_in[:, :, 0:1])], dim=-1)
@@ -159,7 +162,7 @@ class FlexTSFAB_General_Forecast(TransformerDecoder):
                 exist_edge_patch_in[:, :, 0:1]).bool(), exist_edge_patch_in], dim=-1).unsqueeze(-1)
         else:
             exist_edge_patch_in = exist_edge_patch_in.unsqueeze(-1)
-        
+
         edge_gen_process = torch.cat([torch.zeros_like(
             input_states[:, :, 0:1, :]), torch.ones_like(input_states[:, :, 0:1, :])], dim=-2).bool()
 
@@ -169,7 +172,8 @@ class FlexTSFAB_General_Forecast(TransformerDecoder):
         for i in range(0, num_patches_out):
             if self.args.dummy_patch == True:
                 # Pad the end of the sequence with zero
-                hidden_states = torch.cat([input_states, padded_states], dim=-2)
+                hidden_states = torch.cat(
+                    [input_states, padded_states], dim=-2)
 
                 t = torch.cat([t, torch.zeros_like(t[..., 0:1])], dim=-1)
                 # The last dim is the same, so just taking the first element is fine
@@ -181,9 +185,9 @@ class FlexTSFAB_General_Forecast(TransformerDecoder):
 
             hidden_states = hidden_states.view(dim0, *hidden_states.shape[-2:])
             t = t.view(dim0, *t.shape[-1:])
-            
+
             hidden_states = self.forward(hidden_states, t, prev_pos)
-            
+
             hidden_states = hidden_states.view(
                 k_iwae, batch_size * num_vars, *hidden_states.shape[1:])
             t = t.view(k_iwae, batch_size * num_vars, *t.shape[1:])
@@ -200,7 +204,7 @@ class FlexTSFAB_General_Forecast(TransformerDecoder):
             # time_out is repeated by i_kwae, so we can just use the first one
             temp_states_evolved, others = self.patcher.encode(
                 output_value_in, -time_out[0, :, i:i+1, :], torch.ones_like(mask_in[0, :, 0:1, :]), k_iwae)
-            
+
             gen_seq[:, :, :, i, :] = output_value.view(
                 k_iwae, batch_size, num_vars, patch_len)
 
@@ -209,7 +213,7 @@ class FlexTSFAB_General_Forecast(TransformerDecoder):
 
             # In generation part, just using the last states is fine
             exist_edge_patch_in = edge_gen_process
-            
+
             # Don't need to calculate the KL divergence and input_states if it's the last step
             if i < gen_seq.size(-2) - 1:
                 input_states = temp_states_evolved
@@ -235,19 +239,21 @@ class FlexTSFAB_General_Forecast(TransformerDecoder):
                 kldiv_both = kl_loss_input
             # ones_like: Don't expose the structure of output data to the model
             mask_kl = torch.cat(
-                [mask_in[0, ...], torch.ones_like(mask_out_tmp[..., :-1,:])], dim=-2)
+                [mask_in[0, ...], torch.ones_like(mask_out_tmp[..., :-1, :])], dim=-2)
             # Repeat mask_kl to match the shape of kldiv_both
-            mask_kl = mask_kl.unsqueeze(-1).repeat(*([1] * len(mask_kl.shape)), self.args.dim_ts_internal)
+            mask_kl = mask_kl.unsqueeze(-1).repeat(
+                *([1] * len(mask_kl.shape)), self.args.dim_patch_ts)
             # Reshape the data to reconstruct the variable dimension
             kldiv_both = kldiv_both.view(
                 batch_size, num_vars, *kldiv_both.shape[1:])
             mask_kl = mask_kl.view(
                 batch_size, num_vars, *mask_kl.shape[1:])
-            kldiv_loss = (kldiv_both * mask_kl).sum([1, 2, 3, 4])/(mask_kl.sum([1, 2, 3, 4]) + 1e-8)
+            kldiv_loss = (
+                kldiv_both * mask_kl).sum([1, 2, 3, 4])/(mask_kl.sum([1, 2, 3, 4]) + 1e-8)
         else:
             # kldiv_loss is zero
             kldiv_loss = torch.zeros(batch_size).to(pred.device)
-        
+
         likelihood = compute_log_normal_pdf(
             batch['data_out'].unsqueeze(0), batch['mask_out'].unsqueeze(0), pred, self.args)
         # sum out the traj dim
@@ -262,8 +268,3 @@ class FlexTSFAB_General_Forecast(TransformerDecoder):
 
     def run_validation(self, batch):
         return self.forecast(batch, self.args.k_iwae)
-
-
-class FlexTSF_General_Forecast(TransformerDecoder):
-    def __init__(self, args):
-        pass

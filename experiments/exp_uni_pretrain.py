@@ -118,11 +118,12 @@ class Exp_Uni_Pretrain:
 
         self.tags = [self.args.ml_task,
                      self.args.base_model,
-                     "nembd"+str(self.args.n_embd),
+                     "nembd"+str(self.args.dim_attn_internal),
                      "nhead"+str(self.args.nhead),
                      "nlyrs"+str(self.args.attn_layers),
-                     "bsize"+str(self.args.batch_size),
-                     "patch"+str(self.args.patch_len_pretrain),
+                     str(args.vt_norm),
+                     str(args.patch_module),
+                     str(args.leader_node or args.lyr_time_embed or args.dummy_patch),
                      args.version,
                      args.test_info]
 

@@ -34,6 +34,9 @@ class Exp_Forecast_Dh:
                          args.ml_task,
                          args.model_type,
                          train_setting,
+                         str(args.vt_norm),
+                         str(args.patch_module),
+                         str(args.leader_node or args.lyr_time_embed or args.dummy_patch),
                          args.version,
                          args.test_info]
         if self.args.train_setting != "full":
@@ -282,7 +285,7 @@ class Exp_Forecast_Dh:
                 if (f"{self.args.version}" in f and
                     f"patch{self.args.patch_len_pretrain}" in f and
                     f"r{self.args.pre_random_seed}" in f and
-                    self.args.base_model in f and 
+                    self.args.base_model in f and
                     self.args.test_info in f)
             ]
 
@@ -290,11 +293,14 @@ class Exp_Forecast_Dh:
             list_ckpts.sort(key=os.path.getmtime)
 
             # Iterate through filtered checkpoints
+            done = False
             for path_ckpt in list_ckpts:
                 # Extract epoch number
                 epoch_num = int(path_ckpt.split("epoch=")[-1].split(".")[0])
-                if epoch_num >= self.args.max_zeroshot_epochs:
+
+                if epoch_num != self.args.zeroshot_epoch:
                     continue
+                done = True
 
                 # Log checkpoint path and epoch number
                 self.logger.info(f"\n{path_ckpt}\nEpoch {epoch_num}")
@@ -323,13 +329,18 @@ class Exp_Forecast_Dh:
                         "epoch_num": epoch_num
                     })
 
+            if not done:
+                raise ValueError(
+                    f"Epoch {self.args.zeroshot_epoch} not found in checkpoints")
+
     def run(self) -> None:
 
         if self.args.data_name != "":
             datasets = [self.args.data_name]
         else:
             if self.args.data_group == "regular":
-                datasets = ["etth2", "ettm2", "exchange_rate", "illness", "weather", "FordA", "FordB", "HARPhone",]
+                datasets = ["etth2", "ettm2", "exchange_rate",
+                            "illness", "weather", "FordA", "FordB", "HARPhone",]
             elif self.args.data_group == "irregular":
                 datasets = ["metr_la", "pems_bay", "SpokenArabicDigits", "CharacterTrajectories",
                             "HARw4IMU", "eICU", "PhysioNet2012"]
@@ -338,69 +349,70 @@ class Exp_Forecast_Dh:
                             "metr_la", "SpokenArabicDigits", "CharacterTrajectories", "HARw4IMU", "eICU", "PhysioNet2012"]
 
         for data_name in datasets:
-            # try:
-            tags_data_model = self.exp_tags.copy()
-            tags_data_model.insert(1, data_name)
-            self.args.exp_name = '_'.join(
-                tags_data_model + [("r"+str(self.args.random_state))])
+            try:
+                tags_data_model = self.exp_tags.copy()
+                tags_data_model.insert(1, data_name)
+                self.args.exp_name = '_'.join(
+                    tags_data_model + [("r"+str(self.args.random_state))])
 
-            logging.basicConfig(filename=self.proj_path/'log'/(self.args.exp_name+'.log'),
-                                filemode='w',
-                                level=logging.INFO,
-                                force=True)
-            self.logger = logging.getLogger()
+                logging.basicConfig(filename=self.proj_path/'log'/(self.args.exp_name+'.log'),
+                                    filemode='w',
+                                    level=logging.INFO,
+                                    force=True)
+                self.logger = logging.getLogger()
 
-            self.logger.info(f'Device: {self.device}')
+                self.logger.info(f'Device: {self.device}')
 
-            self.args.data_name = data_name
+                self.args.data_name = data_name
 
-            dc = dataset_info[data_name]["configs"]
-            self.args.var_num = dc["var_num"]
-            self.logger.info(f"var_num={self.args.var_num}")
+                dc = dataset_info[data_name]["configs"]
+                self.args.var_num = dc["var_num"]
+                self.logger.info(f"var_num={self.args.var_num}")
 
-            self.args.ltf_pred_len = int(
-                dc["seq_len"] * self.args.forecast_ratio)
-            self.args.ltf_input_len = dc["seq_len"] - \
-                self.args.ltf_pred_len
-            self.logger.info(
-                f"ltf_input_len={self.args.ltf_input_len}, ltf_pred_len={self.args.ltf_pred_len}")
-
-            if dataset_info[data_name].get("hyperparameters") is not None:
-                hp = dataset_info[data_name]["hyperparameters"]
-                # Configure hyperparameters
-                if hp.get(self.args.base_model) is not None:
-                    for key, value in hp[self.args.base_model].items():
-                        setattr(self.args, key, value)
-                        self.logger.info(f"{key}={value}")
-
-            if self.args.model_type == "reconstruct" or self.args.train_setting == "zero":
-                self.args.batch_size = int(
-                    32/math.ceil(math.pow((dc["var_num"]), 1.5) * dc["seq_len"] / 8000))
+                self.args.ltf_pred_len = int(
+                    dc["seq_len"] * self.args.forecast_ratio)
+                self.args.ltf_input_len = dc["seq_len"] - \
+                    self.args.ltf_pred_len
                 self.logger.info(
-                    f"Batch size for {data_name}: {self.args.batch_size}")
+                    f"ltf_input_len={self.args.ltf_input_len}, ltf_pred_len={self.args.ltf_pred_len}")
 
-            self.model = self.get_model().to(self.device)
-            self.dltrain, self.dlval, self.dltest = self.get_data()
-            # Record the number of samples of each dataset
-            self.logger.info(
-                f"train_num={len(self.dltrain.dataset)}, val_num={len(self.dlval.dataset)}, test_num={len(self.dltest.dataset)}")
+                if dataset_info[data_name].get("hyperparameters") is not None:
+                    hp = dataset_info[data_name]["hyperparameters"]
+                    # Configure hyperparameters
+                    if hp.get(self.args.base_model) is not None:
+                        for key, value in hp[self.args.base_model].items():
+                            setattr(self.args, key, value)
+                            self.logger.info(f"{key}={value}")
 
-            num_params = sum(p.numel() for p in self.model.parameters())
-            self.logger.info(f'num_params={num_params}')
+                if self.args.model_type == "reconstruct" or self.args.train_setting == "zero":
+                    self.args.batch_size = int(
+                        32/math.ceil(math.pow((dc["var_num"]), 1.5) * dc["seq_len"] / 8000))
+                    self.logger.info(
+                        f"Batch size for {data_name}: {self.args.batch_size}")
 
-            if self.args.train_setting == 'zero':
-                self.run_zeroshot_exp()
-            else:
-                self.run_tvt_exp()
-            # except Exception as e:
-            #     self.logger.error(traceback.format_exc())
-            #     self.logger.error(str(e))
-            #     continue
+                self.model = self.get_model().to(self.device)
+                self.dltrain, self.dlval, self.dltest = self.get_data()
+                # Record the number of samples of each dataset
+                self.logger.info(
+                    f"train_num={len(self.dltrain.dataset)}, val_num={len(self.dlval.dataset)}, test_num={len(self.dltest.dataset)}")
+
+                num_params = sum(p.numel() for p in self.model.parameters())
+                self.logger.info(f'num_params={num_params}')
+
+                if self.args.train_setting == 'zero':
+                    self.run_zeroshot_exp()
+                else:
+                    self.run_tvt_exp()
+            except Exception as e:
+                self.logger.error(traceback.format_exc())
+                self.logger.error(str(e))
+                continue
 
     def record_experiment(self, args, model):
         now = datetime.now()
         dt_string = now.strftime("%Y%m%d%H%M%S")
-        file_result = self.proj_path / 'results/model_hyper/{}.txt'.format(dt_string)
+        file_result = self.proj_path / \
+            'results/model_hyper/{}.txt'.format(dt_string)
         with open(file_result, 'w') as fr:
             args_dict = vars(args)
             # Convert any PosixPath objects to strings

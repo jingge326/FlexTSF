@@ -6,7 +6,7 @@ from experiments.data_ehr import read_ehr_forecast_tvt
 from experiments.data_monash import DatasetGP_Monash, collate_fn_forecast_monash, read_monash_pretrain_data
 from experiments.data_traffic import read_traffic_forecast_tvt
 from experiments.data_ucruea import Dataset_Forecast_Irregular_Seperated, Dataset_Forecast_Regular_Seperated, collate_fn_forecast_general, read_uea_forecast_tvt
-from models.flextsf import FlexTSF_General_Forecast, FlexTSFAB_General_Forecast
+from models.flextsf import FlexTSF_General_Forecast
 from torch.utils.data import DataLoader, Subset
 
 
@@ -79,16 +79,6 @@ dict_models = {
         },
         "uni_pretrain": {
             "class_obj": FlexTSF_General_Forecast,
-            "collate_fn": collate_fn_forecast_monash,
-        },
-    },
-    "flextsfab": {
-        "forecast": {
-            "class_obj": FlexTSFAB_General_Forecast,
-            "collate_fn": collate_fn_forecast_general,
-        },
-        "uni_pretrain": {
-            "class_obj": FlexTSFAB_General_Forecast,
             "collate_fn": collate_fn_forecast_monash,
         },
     }

@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .. import util
-from torchdiffeq import odeint_adjoint, odeint
+from libs.torchdiffeq import odeint_adjoint, odeint
 
 __all__ = ['ContinuousNormalizingFlow']
 

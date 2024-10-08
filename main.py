@@ -31,7 +31,8 @@ parser.add_argument("--pre_total_steps", type=int, default=400000)
 parser.add_argument("--pre_random_seed", type=int, default=1)
 parser.add_argument("--few_shot_config", type=float, default=1.0)
 parser.add_argument("--ckpt_path", type=str, default="")
-parser.add_argument("--max_zeroshot_epochs", type=int, default=100)
+parser.add_argument("--zeroshot_epoch", type=int, default=1,
+                    help="Ranging from 0 to the epochs_max of pretraining")
 
 # Args for the training process
 parser.add_argument("--dev_mode", default="debug",
@@ -61,7 +62,7 @@ parser.add_argument("--log_tool", default="wandb",
 # Args for datasets
 parser.add_argument("--data_group", default="all",
                     choices=["all", "regular", "irregular"])
-parser.add_argument("--data_name", default="etth2",
+parser.add_argument("--data_name", default="",
                     help="Dataset name. Options are in model_task_data_config. If empty, use data_group")
 parser.add_argument("--var_num", type=int, default=1)
 parser.add_argument("--batch_size", type=int, default=64)
@@ -85,8 +86,8 @@ parser.add_argument("--flow_layers", type=int, default=2,
                     help="Number of flow layers")
 parser.add_argument("--hidden_layers", type=int, default=2,
                     help="Number of hidden layers")
-parser.add_argument("--hidden_dim", type=int, default=128,
-                    help="Size of hidden layer")
+parser.add_argument("--dim_ivp_hidden", type=int, default=128,
+                    help="Size of ivp hidden layer")
 parser.add_argument("--activation", type=str, default="ELU",
                     help="Hidden layer activation")
 parser.add_argument("--final_activation", type=str,
@@ -123,10 +124,10 @@ parser.add_argument("--dropout", type=float, default=0.2,
 parser.add_argument("--embed_time", type=int, default=128,
                     help="Time embedding size")
 parser.add_argument("--attn_layers", type=int, default=2)
-parser.add_argument("--n_embd", type=int, default=64)
+parser.add_argument("--dim_attn_internal", type=int, default=64)
 parser.add_argument("--seq_len_min", type=int, default=16)
 parser.add_argument("--seq_len_max", type=int, default=512)
-parser.add_argument("--dim_ts_internal", type=int, default=64)
+parser.add_argument("--dim_patch_ts", type=int, default=64)
 parser.add_argument("--max_batch_size", type=int, default=64)
 parser.add_argument("--max_seq_len", type=int, default=512)
 parser.add_argument("--norm_eps", type=float, default=1e-5)
@@ -151,10 +152,10 @@ if __name__ == "__main__":
     else:
         experiment = Exp_Forecast_Dh(args)
 
-    # try:
-    #     experiment.run()
-    # except Exception:
-    #     with open(experiment.proj_path/"log"/"err_{}.log".format(experiment.args.exp_name), "w") as fout:
-    #         print(traceback.format_exc(), file=fout)
+    try:
+        experiment.run()
+    except Exception:
+        with open(experiment.proj_path/"log"/"err_{}.log".format(experiment.args.exp_name), "w") as fout:
+            print(traceback.format_exc(), file=fout)
 
-    experiment.run()
+    # experiment.run()

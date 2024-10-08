@@ -1,13 +1,9 @@
 from collections import OrderedDict
-from datetime import datetime
-from itertools import repeat
-import json
 from pathlib import Path
 
-import numpy as np
 import torch
 import torch.nn as nn
-import sklearn as sk
+
 
 PROJ_FOLDER = Path(__file__).parents[0]
 DATA_DIR = PROJ_FOLDER / "data"
@@ -44,7 +40,7 @@ def reconstruct_pretrained_flextsf(self, model, load_para_path, strict=True):
         param.requires_grad = False
 
     ft_modules = ["leaderlyr", "revin_layer",
-                    "input_linear", "output_linear"]
+                  "input_linear", "output_linear"]
     for name, param in model.named_parameters():
         for ftm in ft_modules:
             if ftm in name:
