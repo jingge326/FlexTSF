@@ -7,11 +7,11 @@ This is the official PyTorch implementation of the paper **FlexTSF: A Universal 
 This repository provides the source code implementation for:
 
 - [**FlexTSF model**](./models/flextsf.py)
-- [**Data preprocessing**](#datasets)
-- [**Classic training**](#classic-training)
-- [**Pre-training**](#pre-training)
-- [**Zero-shot**](#zero-shot)
-- [**Few-shot**](#few-shot)
+- [**Data preprocessing**](#2-datasets)
+- [**Classic training**](#31-classic-training)
+- [**Pre-training**](#32-pre-training)
+- [**Zero-shot**](#33-zero-shot)
+- [**Few-shot**](#34-few-shot)
 
 Developing a foundation model for time series forecasting presents significant challenges due to the diverse characteristics of time series data. First, time series data contain a wide range of measurement types, such as systolic blood pressure, exchange rate, and electricity consumption, each demonstrating different scales (e.g., 1-10, 50-150) and temporal granularities (e.g., minutes, hours, days, months). Such _domain diversity_ leads to various temporal patterns that are difficult to be captured within a single model. Second, time series exhibit _structural diversity_, with missing values, varying sequence lengths, and irregular sampling time intervals. For instance, in the following figure, the blood pressure observations depicted in (a) are sparse at the beginning but become denser over time due to the patient's deteriorating condition. In (b), some data is missing due to factors such as holidays. The time series in (d) shows a clear pattern, while the pattern in (c) is less obvious.
 
