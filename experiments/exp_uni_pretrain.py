@@ -121,7 +121,6 @@ class Exp_Uni_Pretrain:
                      "nembd"+str(self.args.dim_attn_internal),
                      "nhead"+str(self.args.nhead),
                      "nlyrs"+str(self.args.attn_layers),
-                     str(args.vt_norm),
                      str(args.patch_module),
                      str(args.leader_node or args.lyr_time_embed or args.dummy_patch),
                      args.version,

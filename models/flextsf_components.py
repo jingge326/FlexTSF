@@ -8,6 +8,7 @@ from torch import einsum
 from torch.distributions import kl_divergence
 from torch.distributions.normal import Normal
 
+from experiments.utils_exp import compute_log_normal_pdf
 import models.model_utils as model_utils
 from models.ivp_solvers.flow import CouplingFlow, ResNetFlow
 from models.ivp_solvers.gru import GRUFlow
@@ -59,6 +60,7 @@ class TimeNorm(nn.Module):
     def __normalizewM(self, times, mask):
         # The beginning of the timestamps has to be zero
         assert torch.all(times[:, 0] == 0)
+
         # Calculate the smallest time interval based available timestamps
         intervals = times[:, 1:] - times[:, :-1]
 
@@ -80,7 +82,10 @@ class TimeNorm(nn.Module):
             times = times * self.affine_weight
             times = times + self.affine_bias
 
-        return times * mask
+        times = times * mask
+        assert times.isnan().sum() == 0
+
+        return times
 
     def normalize(self, times):
         # This part doesn't need a mask, because the final loss is calculated
@@ -153,6 +158,72 @@ class ValueNorm(nn.Module):
         return x * mask
 
 
+class ValueNormMinMax(nn.Module):
+    def __init__(self, num_features: int, eps=1e-8, affine=True, subtract_last=False):
+        super(ValueNormMinMax, self).__init__()
+        self.num_features = num_features
+        self.eps = eps
+        self.affine = affine
+        self.subtract_last = subtract_last
+        if self.affine:
+            self._init_params()
+
+    def forward(self, x, mask, mode: str):
+        if mode == 'norm':
+            self._get_statistics(x, mask)
+            x = self._normalize(x, mask)
+        elif mode == 'denorm':
+            x = self._denormalize(x, mask)
+        else:
+            raise NotImplementedError
+        return x, self.min_val, self.max_val
+
+    def _init_params(self):
+        self.affine_weight = nn.Parameter(torch.ones(self.num_features))
+        self.affine_bias = nn.Parameter(torch.zeros(self.num_features))
+
+    def _get_statistics(self, x, mask):
+        if self.subtract_last:
+            self.last = x[:, -1, :].unsqueeze(1)
+        else:
+            # Compute min and max values while considering the mask
+            # Mask out invalid values with inf
+            masked_x = x * mask + (1 - mask) * 1e8
+            self.min_val, _ = torch.min(
+                masked_x, dim=-2, keepdim=True)
+
+            # Mask out invalid values with -inf
+            masked_x = x * mask + (1 - mask) * (-1e8)
+            self.max_val, _ = torch.max(
+                masked_x, dim=-2, keepdim=True)
+
+    def _normalize(self, x, mask):
+        if self.subtract_last:
+            x = x - self.last
+        else:
+            # Max-min normalization
+            x = (x - self.min_val) / (self.max_val - self.min_val + self.eps)
+
+        if self.affine:
+            x = x * self.affine_weight
+            x = x + self.affine_bias
+
+        return x * mask
+
+    def _denormalize(self, x, mask):
+        if self.affine:
+            x = x - self.affine_bias
+            x = x / (self.affine_weight + self.eps)
+
+        # Denormalize using min and max values
+        if self.subtract_last:
+            x = x + self.last
+        else:
+            x = x * (self.max_val - self.min_val + self.eps) + self.min_val
+
+        return x * mask
+
+
 # Refering to the learnable time embedding of the mTAN model
 # https://github.com/reml-lab/mTAN/tree/main
 class TimeEmbedding(nn.Module):
@@ -180,6 +251,33 @@ class InputEmbedding(nn.Module):
         x = self.value_embedding(
             x) + self.add_time_lyr(self.time_embedding(time))
         return x
+
+
+def compute_freqs_cis(dim: int, timestamps: torch.Tensor, theta: float = 10000.0):
+    """
+    Compute the frequency tensor for complex exponentials (cis) with given dimensions.
+
+    This function calculates a frequency tensor with complex exponentials using the given dimension 'dim'
+    and the timestamps Tensor. The 'theta' parameter scales the frequencies.
+    The returned tensor contains complex values in complex64 data type.
+
+    Args:
+        dim (int): Dimension of the frequency tensor.
+        timestamps (torch.Tensor): timestamps for computing frequencies.
+        theta (float, optional): Scaling factor for frequency computation. Defaults to 10000.0.
+
+    Returns:
+        torch.Tensor: Computed frequency tensor with complex exponentials.
+    """
+    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)
+                   [: (dim // 2)].float() / dim))
+    freqs = freqs.to(timestamps.device)
+    # t = torch.arange(end, device=freqs.device)  # type: ignore
+    # freqs = torch.outer(t, freqs).float()  # type: ignore
+    freqs = einsum('...i,...j->...ij', timestamps, freqs).float()
+
+    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
+    return freqs_cis
 
 
 class SolverWrapper(nn.Module):
@@ -215,78 +313,109 @@ def build_ivp_solver(args):
             raise NotImplementedError
 
         ivp_solver = SolverWrapper(flow(
-            args.dim_patch_ts, args.flow_layers, hidden_dims, args.time_net, args.time_hidden_dim))
+            args.dim_patch_ts, args.flow_layers, hidden_dims, args.time_net, args.time_hidden_dim, args.ivp_invertible))
     return ivp_solver
 
 
 class IVP_Patcher(nn.Module):
-    def __init__(self, args, process):
+    def __init__(self, args):
         super(IVP_Patcher, self).__init__()
         self.args = args
-        self.process = process
-        if process == "in":
-            self.z_mapper_in = nn.Linear(
-                1, args.dim_patch_ts, bias=False)
-            self.ivp_solver_in = build_ivp_solver(args)
-            self.z2mu_mapper = Z_to_mu(args.dim_patch_ts)
-            self.z2std_mapper = Z_to_std(args.dim_patch_ts)
-            self.register_buffer('mu', torch.tensor([args.prior_mu]))
-            self.register_buffer('std', torch.tensor([args.prior_std]))
-        else:
-            self.z_mapper_out = nn.Linear(
-                args.dim_patch_ts, 1, bias=False)
-            self.ivp_solver_out = build_ivp_solver(args)
+        self.z_mapper_in = nn.Linear(
+            1, args.dim_patch_ts, bias=False)
+        self.ivp_solver_in = build_ivp_solver(args)
+        self.z2mu_mapper = Z_to_mu(args.dim_patch_ts)
+        self.z2std_mapper = Z_to_std(args.dim_patch_ts)
+        if self.args.combine_methods == "flatten":
+            self.flatten_mapper = nn.Linear(
+                args.dim_patch_ts*8, args.dim_patch_ts)
+        self.register_buffer('mu', torch.tensor([args.prior_mu]))
+        self.register_buffer('std', torch.tensor([args.prior_std]))
+        self.z_mapper_out = nn.Linear(
+            args.dim_patch_ts, 1, bias=False)
+        self.ivp_solver_out = build_ivp_solver(args)
 
-    def forward(self, x, t, m=None, k_iwae=1, padding=False):
+    def forward(self, x, t, m=None, k_iwae=1, coding_loss=False):
         others = {}
-        if self.process == "in":
-            temp_states_initial = self.z_mapper_in(x.unsqueeze(-1))
-            temp_states_evolved = self.ivp_solver_in(temp_states_initial, -t)
+        temp_states_initial = self.z_mapper_in(x.unsqueeze(-1))
+        temp_states_evolved = self.ivp_solver_in(temp_states_initial, -t)
 
-            if padding is False:
-                z0_mean = self.z2mu_mapper(temp_states_evolved)
-                z0_std = self.z2std_mapper(temp_states_evolved) + 1e-8
-                # KL Divergence Loss
-                fp_distr = Normal(z0_mean, z0_std)
-                kldiv_z0_all = kl_divergence(
-                    fp_distr, torch.distributions.Normal(self.mu, self.std))
-                assert not (torch.isinf(kldiv_z0_all).any() |
-                            torch.isnan(kldiv_z0_all).any())
+        z0_mean = self.z2mu_mapper(temp_states_evolved)
+        z0_std = self.z2std_mapper(temp_states_evolved) + 1e-8
+        # Sample from the inferred distribution
+        z0_mean_iwae = z0_mean.repeat(k_iwae, *([1] * len(z0_mean.shape)))
+        z0_std_iwae = z0_std.repeat(k_iwae, *([1] * len(z0_std.shape)))
+        initial_state = model_utils.sample_standard_gaussian(
+            z0_mean_iwae, z0_std_iwae)
 
-                # Sample from the inferred distribution
-                z0_mean_iwae = z0_mean.repeat(
-                    k_iwae, *([1] * len(z0_mean.shape)))
-                z0_std_iwae = z0_std.repeat(k_iwae, *([1] * len(z0_std.shape)))
-                initial_state = model_utils.sample_standard_gaussian(
-                    z0_mean_iwae, z0_std_iwae)
+        if coding_loss is True:
 
-                # Calculate the mean of the evolved states using the mask
-                mask_in_tmp = m.view(1, *m.shape, 1)
+            # KL Divergence Loss
+            fp_distr = Normal(z0_mean, z0_std)
+            kldiv_z0_all = kl_divergence(
+                fp_distr, torch.distributions.Normal(self.mu, self.std))
+            assert not (torch.isinf(kldiv_z0_all).any() |
+                        torch.isnan(kldiv_z0_all).any())
+            mask_in_tmp = m.view(1, *m.shape, 1)
+            kldiv_z0 = torch.sum(
+                kldiv_z0_all * mask_in_tmp, (-3, -2, -1)) / (mask_in_tmp.sum((-3, -2, -1)) + 1e-8)
 
-                # Integrate inference results
-                if self.args.combine_methods == "average":
-                    input_states = torch.sum(
-                        initial_state * mask_in_tmp, dim=-2) / (mask_in_tmp.sum(dim=-2) + 1e-8)
-                elif self.args.combine_methods == "kl_weighted":
-                    kl_r = kldiv_z0_all
-                    kl_w = kl_r / (torch.sum(kl_r * mask_in_tmp,
-                                             dim=-2, keepdim=True) + 1e-8)
-                    kl_w = kl_w * mask_in_tmp
-                    input_states = torch.sum(initial_state * kl_w, dim=-2)
-                else:
-                    raise NotImplementedError
-                others["kldiv_z0_all"] = kldiv_z0_all
+            # Integrate inference results
+            if self.args.combine_methods == "average":
+                initial_state = torch.sum(
+                    initial_state * mask_in_tmp, dim=-2) / (mask_in_tmp.sum(dim=-2) + 1e-8)
+            elif self.args.combine_methods == "kl_weighted":
+                kl_r = kldiv_z0_all
+                kl_w = kl_r / (torch.sum(kl_r * mask_in_tmp,
+                                         dim=-2, keepdim=True) + 1e-8)
+                kl_w = kl_w * mask_in_tmp
+                initial_state = torch.sum(initial_state * kl_w, dim=-2)
+            elif self.args.combine_methods == "flatten":
+                initial_state = self.flatten_mapper(initial_state.view(
+                    *initial_state.shape[0:-2], -1))
             else:
-                # If the patch is a dummy patch
-                input_states = temp_states_evolved.repeat(
-                    k_iwae, *([1] * len(temp_states_evolved.shape))).mean(dim=-2)
+                initial_state = torch.mean(initial_state, dim=-2)
 
-            out = input_states
+            # Decoder
+            z_gen = self.ivp_solver_out(initial_state.unsqueeze(-2), t.unsqueeze(0).repeat(
+                k_iwae, *([1] * len(t.shape))))
+
+            x_gen = self.z_mapper_out(z_gen).squeeze(-1)
+
+            # Reconstruction/Modeling Loss
+            x_gen_loss = compute_log_normal_pdf(
+                x.repeat(k_iwae, 1, 1, 1), m.repeat(k_iwae, 1, 1, 1), x_gen, self.args)
+
+            # sum out the traj dim
+            patching_loss = - \
+                torch.logsumexp(x_gen_loss - self.args.kl_coef * kldiv_z0, 0)
+
+            # mean out instances
+            others["patching_loss"] = torch.mean(patching_loss, dim=0)
+
         else:
-            temp_states_evolved = self.ivp_solver_out(x.unsqueeze(-2), t)
-            out = self.z_mapper_out(temp_states_evolved).squeeze(-1)
+            initial_state = torch.mean(initial_state, dim=-2)
 
-        return out, others
+        return initial_state, others
+
+    def generate(self, x, t):
+        temp_states_evolved = self.ivp_solver_out(x.unsqueeze(-2), t)
+        out = self.z_mapper_out(temp_states_evolved).squeeze(-1)
+
+        return out
+
+
+class Linear(nn.Module):
+    def __init__(self, args):
+        super(Linear, self).__init__()
+        self.patch_in = nn.Linear(1, args.dim_patch_ts)
+        self.patch_out = nn.Linear(args.dim_patch_ts, 1)
+
+    def forward(self, x):
+        return self.patch_in(x)
+
+    def generate(self, x):
+        return self.patch_out(x)
 
 
 class Patcher(nn.Module):
@@ -294,29 +423,29 @@ class Patcher(nn.Module):
         super(Patcher, self).__init__()
         self.args = args
         if args.patch_module == "ivp":
-            self.patch_in = IVP_Patcher(args, "in")
-            self.patch_out = IVP_Patcher(args, "out")
+            self.patcher = IVP_Patcher(args)
         elif args.patch_module == "none":
-            self.patch_in = nn.Linear(1, args.dim_patch_ts)
-            self.patch_out = nn.Linear(args.dim_patch_ts, 1)
+            self.patcher = Linear(args)
         else:
             raise NotImplementedError
 
-    def encode(self, x, t, m, k_iwae, padding=False):
+    def forward(self, x, t, m, k_iwae, coding_loss=False):
+        others = {}
         if self.args.patch_module == "none":
-            x = self.patch_in(x)
-            x = x.unsqueeze(0).repeat(k_iwae, *([1] * len(x.shape)))
-            others = {}
+            x = self.patcher(x)
+            x = x.unsqueeze(0)
+        elif self.args.patch_module == "ivp":
+            x, others = self.patcher(x, t, m, k_iwae, coding_loss)
         else:
-            x, others = self.patch_in(x, t, m, k_iwae, padding)
+            x = self.patcher(x, t, m)
+            x = x.unsqueeze(0)
         return x, others
 
-    def decode(self, x, t):
+    def generate(self, x, t):
         if self.args.patch_module == "none":
-            x = self.patch_out(x)
-            x = (x, {})
+            x = self.patcher.generate(x)
         else:
-            x = self.patch_out(x, t)
+            x = self.patcher.generate(x, t)
         return x
 
 
@@ -415,7 +544,7 @@ class AttentionBlock(nn.Module):
         self.head_dim = args.dim_attn_internal // args.nhead
         self.feed_forward = FeedForward(
             dim=args.dim_attn_internal,
-            hidden_dim=4 * args.dim_attn_internal,
+            hidden_dim=args.ffn_expansion * args.dim_attn_internal,
             multiple_of=args.multiple_of,
             ffn_dim_multiplier=None
         )
@@ -426,23 +555,23 @@ class AttentionBlock(nn.Module):
 
         self.args = args
         self.wq = nn.Linear(
-            args.dim_patch_ts,
+            args.dim_attn_internal,
             args.nhead * self.head_dim,
             bias=False,
         )
         self.wk = nn.Linear(
-            args.dim_patch_ts,
+            args.dim_attn_internal,
             self.nhead * self.head_dim,
             bias=False,
         )
         self.wv = nn.Linear(
-            args.dim_patch_ts,
+            args.dim_attn_internal,
             self.nhead * self.head_dim,
             bias=False,
         )
         self.wo = nn.Linear(
             args.nhead * self.head_dim,
-            args.dim_patch_ts,
+            args.dim_attn_internal,
             bias=False,
         )
 
@@ -461,7 +590,7 @@ class AttentionBlock(nn.Module):
             self.cache_k = torch.zeros(
                 (
                     x.shape[0],
-                    self.args.max_seq_len,
+                    self.args.cache_seq_len,
                     self.nhead,
                     self.head_dim,
                 )
@@ -469,7 +598,7 @@ class AttentionBlock(nn.Module):
             self.cache_v = torch.zeros(
                 (
                     x.shape[0],
-                    self.args.max_seq_len,
+                    self.args.cache_seq_len,
                     self.nhead,
                     self.head_dim,
                 )
@@ -483,7 +612,6 @@ class AttentionBlock(nn.Module):
         xv = xv.view(bsz, seqlen, self.nhead, self.head_dim)
 
         # Apply the layer-wise time embedding
-        # Refering to the rotary position embedding
         if self.args.lyr_time_embed == True:
             xq_ = torch.view_as_complex(
                 xq.float().reshape(*xq.shape[:-1], -1, 2))
@@ -526,7 +654,7 @@ class AttentionBlock(nn.Module):
 
         # Apply feedforward layer and residual connection
         hidden_states_out = hidden_states + \
-            self.feed_forward.forward(self.ffn_norm(hidden_states))
+            self.feed_forward(self.ffn_norm(hidden_states))
 
         return hidden_states_out
 
@@ -550,8 +678,6 @@ class TransformerDecoder(nn.Module):
 
         seqlen = hidden_states.shape[1]
 
-        # Apply the layer-wise time embedding
-        # Refering to the rotary position embedding
         if self.args.lyr_time_embed == True:
             head_dim = self.args.dim_attn_internal // self.args.nhead
             freqs = 1.0 / (self.args.freqs_theta ** (torch.arange(0, head_dim, 2)
@@ -566,9 +692,15 @@ class TransformerDecoder(nn.Module):
 
         mask = None
         if seqlen > 1:
-            mask = torch.full((seqlen, seqlen), float(
-                '-inf'), device=hidden_states.device)
-            mask = torch.triu(mask, diagonal=1)
+            if self.args.attn_architecture == "dec":
+                mask = torch.full((seqlen, seqlen), float(
+                    '-inf'), device=hidden_states.device)
+                mask = torch.triu(mask, diagonal=1)
+            elif self.args.attn_architecture == "enc":
+                mask = torch.zeros(
+                    (seqlen, seqlen), device=hidden_states.device)
+            else:
+                raise NotImplementedError
 
             mask = torch.hstack([
                 torch.zeros((seqlen, start_pos), device=hidden_states.device),

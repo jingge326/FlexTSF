@@ -4,6 +4,18 @@ import os
 import numpy as np
 
 
+def draw_subset(root_path):
+    path_data = root_path/'data/monash/processed/monash_tsc_1024_min18_all'
+    content = np.load(str(path_data)+".npz", allow_pickle=True)
+    data_dict = content["data_dict"].item()
+    # randomly draw 20k samples
+    keys = np.random.choice(list(data_dict.keys()), 20000, replace=False)
+    data_dict_subset = {}
+    for i, key in enumerate(keys):
+        data_dict_subset[i] = data_dict[key]
+    np.savez(str(path_data)+"_subset.npz", data_dict=data_dict_subset)
+
+
 def transform_to_npz(root_path):
     # path_data = root_path/'data/monash/processed/monash_tsc_1024_min18_20k'
     # Added FordA and FordB
@@ -282,3 +294,5 @@ if __name__ == "__main__":
     merge_files(root_path)
 
     transform_to_npz(root_path)
+
+    draw_subset(root_path)

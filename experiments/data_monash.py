@@ -6,7 +6,7 @@ from torch.utils.data import Dataset
 
 def read_monash_pretrain_data(args):
     root_path = args.proj_path
-    # path_data = root_path/'data/monash/processed/monash_tsc_1024_min18_20k'
+    # path_data = root_path/'data/monash/processed/monash_tsc_1024_min18_all_subset'
     path_data = root_path/'data/monash/processed/monash_tsc_1024_min18_all'
 
     content = np.load(str(path_data)+".npz", allow_pickle=True)
@@ -28,23 +28,42 @@ class DatasetGP_Monash(Dataset):
         # The total length is input length + output length
         # The input length is randomly sampled from [seq_len_min, seq_len_max]
         # The output length is 1/8 of the input length
-        seq_len_max = min(math.floor(self.args.seq_len_max *
-                          9 / 8), self.data[idx]["len"])
-        seq_len_min = math.floor(self.args.seq_len_min * 9 / 8)
+        seq_len_max = min(math.floor(
+            self.args.seq_len_max * 2), self.data[idx]["len"])
+        seq_len_min = math.floor(self.args.seq_len_min * self.args.tir)
         len_total = np.random.randint(seq_len_min, seq_len_max + 1)
-        len_in = math.floor(len_total * 8 / 9)
+        len_in = math.floor(len_total * (1/self.args.tir))
         item = self.data[idx]
         start_idx = np.random.randint(0, self.data[idx]["len"] - len_total + 1)
-        data_in = item["value"][start_idx:start_idx + len_in]
-        data_out = item["value"][start_idx + len_in:start_idx + len_total]
-        time_in = item["time"][start_idx:start_idx + len_in]
-        time_out = item["time"][start_idx + len_in:start_idx + len_total]
+        if self.args.ar_gen_way == "simul" and self.args.base_model == "flextsf":
+            # data_in and data_out have the same length (len_in + len_fore).
+            # data_in has only the beginning part filled with data while the rest is filled with zeros
+            # data_out has only the ending part filled with data while the rest is filled with zeros
+            data_in = np.zeros(len_total)
+            data_out = data_in.copy()
+            data_in[:len_in] = item["value"][start_idx:start_idx + len_in]
+            data_out[len_in:len_total] = item["value"][start_idx +
+                                                       len_in:start_idx + len_total]
+
+            time_in = np.zeros(len_total)
+            time_out = time_in.copy()
+            time_in[:len_in] = item["time"][start_idx:start_idx +
+                                            len_in] - item["time"][start_idx]
+            time_out[len_in:len_total] = item["time"][start_idx +
+                                                      len_in:start_idx + len_total] - item["time"][start_idx]
+
+        else:
+            data_in = item["value"][start_idx:start_idx + len_in]
+            data_out = item["value"][start_idx + len_in:start_idx + len_total]
+            time_in = item["time"][start_idx:start_idx + len_in]
+            time_out = item["time"][start_idx + len_in:start_idx + len_total]
+            # Calculate the relative time
+            time_out = time_out - time_in[0]
+            time_in = time_in - time_in[0]
+
         gmean = item["gmean"]
         gstd = item["gstd"]
         time_unit = item["time_unit"]
-        # Calculate the relative time
-        time_out = time_out - time_in[0]
-        time_in = time_in - time_in[0]
 
         return {"data_name": item["data_name"],
                 "data_in": data_in,
@@ -125,7 +144,7 @@ def collate_fn_forecast_monash(batch, args):
         "time_unit": combined_time_unit.float().unsqueeze(-1),
         "patch_len": patch_len,
         "data_names": data_names,
-        "exist_in": exist_in
+        "exist_in": exist_in.float()
     }
 
     return data_dict

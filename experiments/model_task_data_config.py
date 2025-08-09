@@ -1,25 +1,24 @@
 import torch
-from experiments.data_harphone import read_harphone_forecast_tvt
+from torch.utils.data import DataLoader, Subset
 from experiments.data_harw4imu import read_harw4imu_forecast_tvt
 from experiments.data_ltf import Dataset_Forecast_Regular_Continuous, Dataset_Forecast_Regular_Continuous, read_etth_forecast_tvt, read_ettm_forecast_tvt, read_ltfcustom_forecast_tvt
 from experiments.data_ehr import read_ehr_forecast_tvt
 from experiments.data_monash import DatasetGP_Monash, collate_fn_forecast_monash, read_monash_pretrain_data
+from experiments.data_satsm import read_satsm_forecast_tvt
 from experiments.data_traffic import read_traffic_forecast_tvt
-from experiments.data_ucruea import Dataset_Forecast_Irregular_Seperated, Dataset_Forecast_Regular_Seperated, collate_fn_forecast_general, read_uea_forecast_tvt
+from experiments.data_ucruea import Dataset_Forecast_Irregular_Seperated, collate_fn_forecast_general, read_uea_forecast_tvt
 from models.flextsf import FlexTSF_General_Forecast
-from torch.utils.data import DataLoader, Subset
 
 
 def get_general_tvt(args, logger):
 
-    try:
-        dataset_class = dataset_info[args.data_name]["modules"][args.ml_task]["dataclass"]
-    except KeyError:
-        raise NotImplementedError(
-            f'No dataclass available for {args.data_name} and {args.ml_task}')
+    dataset_class = dataset_info[args.data_name]["modules"][args.ml_task]["dataclass"]
 
     read_data_fn = dataset_info[args.data_name]["modules"][args.ml_task]["data_reader"]
     dc = dataset_info[args.data_name]["configs"]
+
+    if args.ltf_features == "S" and args.data_name in ["etth2", "ettm2", "exrate", "illness", "weather"]:
+        dc["var_num"] = 1
 
     data_train, data_val, data_test = read_data_fn(dc, args, logger)
 
@@ -81,7 +80,7 @@ dict_models = {
             "class_obj": FlexTSF_General_Forecast,
             "collate_fn": collate_fn_forecast_monash,
         },
-    }
+    },
 }
 
 
@@ -103,24 +102,19 @@ dataset_info = {
                 "data_reader": read_monash_pretrain_data},
         }
     },
-    "metr_la": {
+    "etth1": {
         "modules": {
             "forecast": {
-                "dataclass": Dataset_Forecast_Irregular_Seperated,
-                "data_reader": read_traffic_forecast_tvt, },
+                "dataclass": Dataset_Forecast_Regular_Continuous,
+                "data_reader": read_etth_forecast_tvt},
         },
         "configs": {
-            "name": "metr_la",
-            "var_num": 207,
-            "data_type": "traffic",
-            "frequency": 1.1574e-5,
-            "time_unit": 86400,
-            "seq_len": 24,
-        },
-        "hyperparameters": {
-            "contiformer": {
-                "batch_size": 32,
-            },
+            "name": "etth1",
+            "var_num": 7,
+            "data_type": "ltf",
+            "frequency": 0.0002778,
+            "time_unit": 3600,
+            "regularity": "regular",
         },
     },
     "etth2": {
@@ -135,8 +129,23 @@ dataset_info = {
             "data_type": "ltf",
             "frequency": 0.0002778,
             "time_unit": 3600,
-            "seq_len": 192,
+            "regularity": "regular",
             "patch_len": 4,
+        },
+    },
+    "ettm1": {
+        "modules": {
+            "forecast": {
+                "dataclass": Dataset_Forecast_Regular_Continuous,
+                "data_reader": read_ettm_forecast_tvt},
+        },
+        "configs": {
+            "name": "ettm1",
+            "var_num": 7,
+            "data_type": "ltf",
+            "frequency": 0.001111,
+            "time_unit": 900,
+            "regularity": "regular",
         },
     },
     "ettm2": {
@@ -151,22 +160,22 @@ dataset_info = {
             "data_type": "ltf",
             "frequency": 0.001111,
             "time_unit": 900,
-            "seq_len": 512,
+            "regularity": "regular",
         },
     },
-    "exchange_rate": {
+    "exrate": {
         "modules": {
             "forecast": {
                 "dataclass": Dataset_Forecast_Regular_Continuous,
                 "data_reader": read_ltfcustom_forecast_tvt},
         },
         "configs": {
-            "name": "exchange_rate",
+            "name": "exrate",
             "var_num": 8,
             "data_type": "ltf",
             "frequency": 1.15741e-5,
             "time_unit": 86400,
-            "seq_len": 192,
+            "regularity": "regular",
         },
     },
     "illness": {
@@ -181,7 +190,7 @@ dataset_info = {
             "data_type": "ltf",
             "frequency": 1.653439e-6,
             "time_unit": 604800,
-            "seq_len": 96,
+            "regularity": "regular",
         },
     },
     "weather": {
@@ -196,7 +205,77 @@ dataset_info = {
             "data_type": "ltf",
             "frequency": 0.001667,
             "time_unit": 600,
-            "seq_len": 256,
+            "regularity": "regular",
+        },
+    },
+    "electricity": {
+        "modules": {
+            "forecast": {
+                "dataclass": Dataset_Forecast_Regular_Continuous,
+                "data_reader": read_ltfcustom_forecast_tvt},
+        },
+        "configs": {
+            "name": "electricity",
+            "var_num": 321,
+            "data_type": "ltf",
+            "frequency": 0.0002778,
+            "time_unit": 3600,
+            "regularity": "regular",
+        },
+        "hyperparameters": {
+            "flextsf01": {
+                "batch_size": 8,
+            },
+            "flextsf": {
+                "batch_size": 8,
+            },
+        },
+    },
+    "traffic": {
+        "modules": {
+            "forecast": {
+                "dataclass": Dataset_Forecast_Regular_Continuous,
+                "data_reader": read_ltfcustom_forecast_tvt},
+        },
+        "configs": {
+            "name": "traffic",
+            "var_num": 862,
+            "data_type": "ltf",
+            "frequency": 0.0002778,
+            "time_unit": 3600,
+            "regularity": "regular",
+        },
+        "hyperparameters": {
+            "flextsf01": {
+                "batch_size": 4,
+            },
+            "flextsf": {
+                "batch_size": 4,
+            },
+        },
+    },
+    "metrla": {
+        "modules": {
+            "forecast": {
+                "dataclass": Dataset_Forecast_Irregular_Seperated,
+                "data_reader": read_traffic_forecast_tvt, },
+        },
+        "configs": {
+            "name": "metrla",
+            "var_num": 207,
+            "data_type": "traffic",
+            "frequency": 1.1574e-5,
+            "time_unit": 86400,
+            "regularity": "irregular",
+            "irreg_seq_len_max": 24,
+        },
+        "hyperparameters": {
+            "contiformer": {
+                "batch_size": 32,
+            },
+            "flextsf": {
+                "batch_size": 32,
+            },
         },
     },
     "SpokenArabicDigits": {
@@ -212,7 +291,8 @@ dataset_info = {
             "frequency": 11025,
             "time_unit": 9.0703e-5,
             "intro": "https://archive.ics.uci.edu/dataset/195/spoken+arabic+digit",
-            "seq_len": 93,
+            "regularity": "irregular",
+            "irreg_seq_len_max": 93,
             "missing_drop_rate": 0.1,
         },
     },
@@ -229,24 +309,9 @@ dataset_info = {
             "frequency": 200,
             "time_unit": 0.005,
             "intro": "https://archive.ics.uci.edu/dataset/175/character+trajectories",
-            "seq_len": 182,
+            "regularity": "irregular",
+            "irreg_seq_len_max": 182,
             "missing_drop_rate": 0.1,
-        },
-    },
-    "HARPhone": {
-        "modules": {
-            "forecast": {
-                "dataclass": Dataset_Forecast_Regular_Seperated,
-                "data_reader": read_harphone_forecast_tvt},
-        },
-        "configs": {
-            "name": "HARPhone",
-            "var_num": 9,
-            "data_type": "harphone",
-            "frequency": 50,
-            "time_unit": 0.02,
-            "intro": "https://archive.ics.uci.edu/dataset/240/human+activity+recognition+using+smartphones",
-            "seq_len": 128,
         },
     },
     "HARw4IMU": {
@@ -261,7 +326,8 @@ dataset_info = {
             "data_type": "harw4imu",
             "time_unit": 0.1,
             "intro": "https://archive.ics.uci.edu/dataset/196/localization+data+for+person+activity",
-            "seq_len": 50,
+            "irreg_seq_len_max": 50,
+            "regularity": "irregular",
         },
     },
     "PhysioNet2012": {
@@ -276,7 +342,8 @@ dataset_info = {
             "data_type": "ehr",
             "time_unit": 60,
             "intro": "https://physionet.org/content/challenge-2012/1.0.0/",
-            "seq_len": 216,
+            "irreg_seq_len_max": 216,
+            "regularity": "irregular",
         },
     },
     "eICU": {
@@ -291,7 +358,50 @@ dataset_info = {
             "data_type": "ehr",
             "time_unit": 60,
             "intro": "https://physionet.org/content/eicu-crd/2.0/",
-            "seq_len": 446,
+            "irreg_seq_len_max": 446,
+            "regularity": "irregular",
+        },
+    },
+    "MIMIC4": {
+        "modules": {
+            "forecast": {
+                "dataclass": Dataset_Forecast_Irregular_Seperated,
+                "data_reader": read_ehr_forecast_tvt},
+        },
+        "configs": {
+            "name": "MIMIC4",
+            "var_num": 71,
+            "data_type": "ehr",
+            "time_unit": 60,
+            "intro": "https://physionet.org/content/mimiciv/2.2/",
+            "irreg_seq_len_max": 786,
+            "regularity": "irregular",
+        },
+        "hyperparameters": {
+            "flextsf01": {
+                "batch_size": 16,
+            },
+            "flextsf": {
+                "batch_size": 16,
+            },
+            "contiformer": {
+                "batch_size": 16,
+            },
+        },
+    },
+    "satsm": {
+        "modules": {
+            "forecast": {
+                "dataclass": Dataset_Forecast_Irregular_Seperated,
+                "data_reader": read_satsm_forecast_tvt},
+        },
+        "configs": {
+            "name": "satsm",
+            "var_num": 13,
+            "data_type": "satellite",
+            "time_unit": 86400,
+            "regularity": "irregular",
+            "irreg_seq_len_max": 96,
         },
     },
 }

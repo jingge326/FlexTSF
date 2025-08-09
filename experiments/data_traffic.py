@@ -2,7 +2,7 @@ import numpy as np
 
 
 def read_traffic_forecast_tvt(dc, args, logger):
-    if args.data_name == "metr_la":
+    if args.data_name == "metrla":
         path_traffic = args.proj_path/'data/traffic/metr-la'
     elif args.data_name == "pems_bay":
         path_traffic = args.proj_path/'data/traffic/pems-bay'
@@ -26,6 +26,12 @@ def read_traffic_forecast_tvt(dc, args, logger):
         time = time - time[:, 0:1]
 
         mask = (value != 0).astype(np.float32)
+
+        # select series who have at least four valid timestamps so that we have at least two timestamps for the input
+        valid_samples = mask.any(-1).sum(-1) >= 4
+        value = value[valid_samples]
+        time = time[valid_samples]
+        mask = mask[valid_samples]
 
         # There some samples that all values are 0, we take them as invalid samples and remove them
         exist_times = mask.any(-1)

@@ -23,22 +23,23 @@ class Exp_Forecast_Dh:
     def __init__(self, args: Namespace):
         self.args = args
         self.proj_path = Path(args.proj_path)
-        torch.manual_seed(args.random_state)
-        np.random.seed(args.random_state)
-        random.seed(args.random_state)
         self.device = torch.device(args.device)
         train_setting = args.train_setting
         if train_setting == "few":
             train_setting = "few" + "_" + str(int(args.few_shot_config))
         self.exp_tags = [args.base_model,
                          args.ml_task,
-                         args.model_type,
                          train_setting,
-                         str(args.vt_norm),
-                         str(args.patch_module),
-                         str(args.leader_node or args.lyr_time_embed or args.dummy_patch),
+                         "P"+str(args.patch_module),
+                         "T"+str(args.time_norm),
+                         "L"+str(args.leader_node),
+                         args.patch_seg[:4],
                          args.version,
                          args.test_info]
+
+        if self.args.ddr != -1:
+            self.exp_tags.insert(-3, f"ddr{int(self.args.ddr*100)}")
+
         if self.args.train_setting != "full":
             self.exp_tags.insert(-3, f"ppl{self.args.patch_len_pretrain}")
 
@@ -61,7 +62,7 @@ class Exp_Forecast_Dh:
 
         model = class_obj(self.args)
 
-        if self.args.model_type != "initialize":
+        if self.args.train_setting == "few":
             model = reconstruct_pretrained_flextsf(
                 model, load_para_path=self.proj_path/self.args.pre_model)
 
@@ -100,43 +101,62 @@ class Exp_Forecast_Dh:
 
     def test_step(self):
         metrics = self.compute_results_all_batches(
-            self.dltest, record_forecasts=True)
-        self.logger.info(f"test_mse={metrics['mse']:.5f}")
-        self.logger.info(f"test_mae={metrics['mae']:.5f}")
+            self.dltest, record_forecasts=self.args.record_forecasts)
+
+        if metrics.get("test_mse") == 0:
+            test_mse = metrics["mse"]
+        else:
+            test_mse = metrics["test_mse"]
+
+        if metrics.get("test_mae") == 0:
+            test_mae = metrics["mae"]
+        else:
+            test_mae = metrics["test_mae"]
+
+        self.logger.info(f"test_mse={test_mse:.5f}")
+        self.logger.info(f"test_mae={test_mae:.5f}")
         self.logger.info(f"test_forward_time={metrics['forward_time']:.5f}")
         if self.args.log_tool == "wandb":
             wandb.log(
-                {"test_mse/"+self.args.data_name: metrics['mse'], "run_id": 1})
+                {"test_mse/"+self.args.data_name: test_mse, "run_id": 1})
             wandb.log(
-                {"test_mae/"+self.args.data_name: metrics['mae'], "run_id": 1})
+                {"test_mae/"+self.args.data_name: test_mae, "run_id": 1})
         return metrics['loss']
 
     def compute_results_all_batches(self, dl, record_forecasts=False):
+        if hasattr(self.model, "prepare_validation"):
+            self.model.prepare_validation(self.logger)
         metrics = {}
         metrics["loss"] = 0
         metrics["mse"] = 0
         metrics["mae"] = 0
+        metrics["test_mse"] = 0
+        metrics["test_mae"] = 0
         metrics["forward_time"] = 0
 
         n_test_batches = 0
         records = []
         for batch in dl:
             results = self.model.run_validation(batch)
-            pred = results['pred']
-            truth = batch['data_out']
-            if results.get("loss") is None:
-                results["loss"] = mean_squared_error(
-                    truth, pred, batch["mask_out"])
-            pred = pred.detach().cpu().numpy()
-            truth = truth.detach().cpu().numpy()
-            mask = batch["mask_out"].detach().cpu().numpy()
+            if results.get("pred") is not None:
+                pred = results['pred']
+                truth = batch['data_out']
+                mask = batch['mask_out']
+                if results.get("loss") is None:
+                    results["loss"] = mean_squared_error(truth, pred, mask)
 
-            if results.get("mse") is None:
-                results['mse'] = mean_squared_error(
-                    orig=truth, pred=pred, mask=mask)
-            if results.get("mae") is None:
-                results['mae'] = mean_absolute_error(
-                    orig=truth, pred=pred, mask=mask)
+                if results.get("mse") is None:
+                    results['mse'] = mean_squared_error(
+                        orig=truth, pred=pred, mask=mask)
+                if results.get("mae") is None:
+                    results['mae'] = mean_absolute_error(
+                        orig=truth, pred=pred, mask=mask)
+                if batch.get("mask_last") is not None:
+                    mask_test = mask * batch["mask_last"].unsqueeze(-1)
+                    results['test_mse'] = mean_squared_error(
+                        orig=truth, pred=pred, mask=mask_test)
+                    results['test_mae'] = mean_absolute_error(
+                        orig=truth, pred=pred, mask=mask_test)
 
             for key in metrics.keys():
                 if results.get(key) is not None:
@@ -152,6 +172,7 @@ class Exp_Forecast_Dh:
                         record[bk] = bv.detach().cpu().numpy()
                     else:
                         record[bk] = bv
+                pred = pred.detach().cpu().numpy()
                 # transform the pred to the original scale
                 if self.scaler is not None:
                     record["pred"] = self.scaler.inverse_transform(
@@ -214,7 +235,6 @@ class Exp_Forecast_Dh:
                     torch.nn.utils.clip_grad_norm_(
                         self.model.parameters(), self.args.clip)
                 self.optim.step()
-
                 self.logger.info(
                     f'[epoch={epoch:04d}|iter={iteration:04d}] train_loss={train_loss:.5f}')
                 if self.args.log_tool == 'wandb':
@@ -230,6 +250,7 @@ class Exp_Forecast_Dh:
             self.model.eval()
             with torch.no_grad():
                 val_loss = self.validation_step(epoch)
+
             self.logger.info(
                 f'[epoch={epoch:04d}] val_loss={val_loss:.5f}')
             if self.args.log_tool == 'wandb':
@@ -269,16 +290,23 @@ class Exp_Forecast_Dh:
             wandb.log({"test_loss/"+self.args.data_name: test_loss, "run_id": 1})
 
         self.record_experiment(self.args, self.model)
+
         torch.save(self.model.state_dict(), self.proj_path /
                    'results/model_para' / (self.args.exp_name+'.pt'))
 
         logging.shutdown()
 
     def run_zeroshot_exp(self):
+        self.model.to(self.device)
         self.model.eval()
         path_ckpts = self.proj_path/"results/pl_checkpoint/"
         if self.args.test_info_pt == "":
             self.args.test_info_pt = self.args.test_info
+
+        if self.args.ze_max > 0:
+            ze_list = range(self.args.ze_max)
+        else:
+            ze_list = [self.args.zeroshot_epoch]
 
         with torch.no_grad():
             # Collect and filter checkpoint files based on specified conditions
@@ -300,7 +328,7 @@ class Exp_Forecast_Dh:
                 # Extract epoch number
                 epoch_num = int(path_ckpt.split("epoch=")[-1].split(".")[0])
 
-                if epoch_num != self.args.zeroshot_epoch:
+                if epoch_num not in ze_list:
                     continue
                 done = True
 
@@ -309,7 +337,8 @@ class Exp_Forecast_Dh:
 
                 # Load and modify state_dict
                 state_dict = modify_state_dict_keys(
-                    torch.load(path_ckpt)['state_dict']
+                    torch.load(path_ckpt, map_location=self.device,
+                               weights_only=False)['state_dict']
                 )
                 self.model.load_state_dict(state_dict, strict=True)
 
@@ -335,80 +364,124 @@ class Exp_Forecast_Dh:
                 raise ValueError(
                     f"Epoch {self.args.zeroshot_epoch} not found in checkpoints")
 
+    def run_statistic_exp(self):
+
+        test_loss = self.test_step()
+
+        self.logger.info(f'test_loss={test_loss:.5f}')
+
     def run(self) -> None:
 
         if self.args.data_name != "":
             datasets = [self.args.data_name]
         else:
             if self.args.data_group == "regular":
-                datasets = ["etth2", "ettm2", "exchange_rate",
-                            "illness", "weather", "HARPhone"]
-            elif self.args.data_group == "irregular":
-                datasets = ["metr_la", "SpokenArabicDigits",
-                            "CharacterTrajectories", "HARw4IMU", "eICU", "PhysioNet2012"]
+                datasets = ["etth1", "etth2", "ettm1", "ettm2",
+                            "exrate", "illness", "weather", "electricity"]
             else:
-                datasets = ["etth2", "ettm2", "exchange_rate", "illness", "weather", "HARPhone",
-                            "metr_la", "SpokenArabicDigits", "CharacterTrajectories", "HARw4IMU", "eICU", "PhysioNet2012"]
+                datasets = ["satsm", "metrla", "SpokenArabicDigits",
+                            "CharacterTrajectories", "HARw4IMU", "eICU", "PhysioNet2012", "MIMIC4"]
+
+        horizons = {
+            "regular": [96, 192, 336, 720],
+            "irregular": [0.25, 0.50, 1.00],
+        }
 
         for data_name in datasets:
-            try:
-                tags_data_model = self.exp_tags.copy()
-                tags_data_model.insert(1, data_name)
-                self.args.exp_name = '_'.join(
-                    tags_data_model + [("r"+str(self.args.random_state))])
+            self.args.data_name = data_name
+            dc = dataset_info[data_name]["configs"]
+            reg = dc["regularity"]
+            if self.args.fore_len > 0:
+                lens_forecast = [self.args.fore_len]
+            else:
+                lens_forecast = horizons[reg]
+            if reg == "regular":
+                len_input = self.args.len_input
+            else:
+                len_input = 1.0
+                self.args.irreg_seq_len_max = dc["irreg_seq_len_max"]
 
-                logging.basicConfig(filename=self.proj_path/'log'/(self.args.exp_name+'.log'),
-                                    filemode='w',
-                                    level=logging.INFO,
-                                    force=True)
-                self.logger = logging.getLogger()
+            for len_forecast in lens_forecast:
+                random.seed(self.args.random_state)
+                np.random.seed(self.args.random_state)
+                torch.manual_seed(self.args.random_state)
+                torch.cuda.manual_seed(self.args.random_state)
+                torch.cuda.manual_seed_all(self.args.random_state)
+                try:
+                    self.args.len_input = len_input
+                    self.args.len_forecast = len_forecast
 
-                self.logger.info(f'Device: {self.device}')
+                    tags_data_model = self.exp_tags[:1] + \
+                        [data_name, str(len_forecast).replace(
+                            ".", "")] + self.exp_tags[1:]
+                    self.args.exp_name = '_'.join(
+                        tags_data_model + [("r"+str(self.args.random_state))])
 
-                self.args.data_name = data_name
+                    if self.args.log_tool == 'wandb':
+                        wandb.run.tags = tags_data_model
 
-                dc = dataset_info[data_name]["configs"]
-                self.args.var_num = dc["var_num"]
-                self.logger.info(f"var_num={self.args.var_num}")
+                    logging.basicConfig(filename=self.proj_path/'log'/(self.args.exp_name+'.log'),
+                                        filemode='w',
+                                        level=logging.INFO,
+                                        force=True)
+                    self.logger = logging.getLogger()
 
-                self.args.ltf_pred_len = int(
-                    dc["seq_len"] * self.args.forecast_ratio)
-                self.args.ltf_input_len = dc["seq_len"] - \
-                    self.args.ltf_pred_len
-                self.logger.info(
-                    f"ltf_input_len={self.args.ltf_input_len}, ltf_pred_len={self.args.ltf_pred_len}")
+                    self.logger.info(f'Device: {self.device}')
 
-                if dataset_info[data_name].get("hyperparameters") is not None:
-                    hp = dataset_info[data_name]["hyperparameters"]
-                    # Configure hyperparameters
-                    if hp.get(self.args.base_model) is not None:
-                        for key, value in hp[self.args.base_model].items():
-                            setattr(self.args, key, value)
-                            self.logger.info(f"{key}={value}")
+                    if self.args.ltf_features == "S" and reg == "regular":
+                        dc["var_num"] = 1
+                    self.args.var_num = dc["var_num"]
+                    self.logger.info(f"var_num={self.args.var_num}")
+                    self.logger.info(
+                        f"len_input={self.args.len_input}, len_forecast={self.args.len_forecast}")
 
-                if self.args.model_type == "reconstruct" or self.args.train_setting == "zero":
-                    self.args.batch_size = int(
-                        32/math.ceil(math.pow((dc["var_num"]), 1.5) * dc["seq_len"] / 8000))
+                    if dataset_info[data_name].get("hyperparameters") is not None:
+                        hp = dataset_info[data_name]["hyperparameters"]
+                        # Configure hyperparameters
+                        if hp.get(self.args.base_model) is not None:
+                            for key, value in hp[self.args.base_model].items():
+                                setattr(self.args, key, value)
+                                self.logger.info(f"{key}={value}")
+
+                    if self.args.train_setting == "few":
+                        if self.args.data_group == "irregular":
+                            self.args.batch_size = math.ceil(
+                                16/math.ceil(math.pow((dc["var_num"]), 1.5) * dc["irreg_seq_len_max"] / 4000))
+                        else:
+                            self.args.batch_size = math.ceil(
+                                16/math.ceil(math.pow((dc["var_num"]), 1.5) * 192 / 4000))
+                    elif self.args.train_setting == "zero":
+                        self.args.batch_size = 1
+                    elif self.args.train_setting == "full" and self.args.patch_seg == "random":
+                        self.args.batch_size = int(self.args.batch_size / 2)
+
                     self.logger.info(
                         f"Batch size for {data_name}: {self.args.batch_size}")
 
-                self.model = self.get_model().to(self.device)
-                self.dltrain, self.dlval, self.dltest = self.get_data()
-                # Record the number of samples of each dataset
-                self.logger.info(
-                    f"train_num={len(self.dltrain.dataset)}, val_num={len(self.dlval.dataset)}, test_num={len(self.dltest.dataset)}")
+                    self.model = self.get_model().to(self.device)
+                    self.dltrain, self.dlval, self.dltest = self.get_data()
 
-                num_params = sum(p.numel() for p in self.model.parameters())
-                self.logger.info(f'num_params={num_params}')
+                    # Record the number of samples of each dataset
+                    self.logger.info(
+                        f"train_num={len(self.dltrain.dataset)}, val_num={len(self.dlval.dataset)}, test_num={len(self.dltest.dataset)}")
 
-                if self.args.train_setting == 'zero':
-                    self.run_zeroshot_exp()
-                else:
-                    self.run_tvt_exp()
-            except Exception as e:
-                self.logger.error(traceback.format_exc())
-                self.logger.error(str(e))
-                continue
+                    num_params = sum(p.numel()
+                                     for p in self.model.parameters())
+                    self.logger.info(f'num_params={num_params}')
+
+                    if self.args.train_setting == 'zero':
+                        self.run_zeroshot_exp()
+                    elif self.args.train_setting == 'statistic':
+                        self.run_statistic_exp()
+                    else:
+                        self.run_tvt_exp()
+
+                except Exception as e:
+                    self.logger.error(traceback.format_exc())
+                    self.logger.error(str(e))
+                    with open(self.args.proj_path/"log"/"err_{}.log".format(self.args.exp_name), "w") as fout:
+                        print(traceback.format_exc(), file=fout)
+                    continue
 
     def record_experiment(self, args, model):
         now = datetime.now()

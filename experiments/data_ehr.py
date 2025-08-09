@@ -7,13 +7,28 @@ import sklearn.model_selection
 from torchvision.datasets.utils import download_url
 
 
-def load_eicu_tvt(args, path_eicu, logger):
-    path_processed = path_eicu/'processed'
-    data_eicu = pd.read_csv(path_processed/'eicu_data.csv', index_col=0)
-    return data_eicu
+def filter_bad_sequences(data_tvt, args):
+    # Apply some filstering
+    # There are values before and after 24h
+    next_start = 1440
+    data_tvt.set_index('ID', inplace=True)
+    ids_before = data_tvt.loc[data_tvt['Time']
+                              < next_start].index.unique()
+    ids_after = data_tvt.loc[data_tvt['Time']
+                             > next_start].index.unique()
+    ids_selected = set(ids_before) & set(ids_after)
+    data_tvt = data_tvt.loc[list(ids_selected)]
+
+    # drop admissions which have less than 4 time steps
+    len_counts = data_tvt.index.value_counts()
+    ids_good = len_counts.index[len_counts >= 4]
+    data_tvt = data_tvt.loc[data_tvt.index.isin(ids_good)]
+
+    data_tvt.reset_index(inplace=True)
+    return data_tvt
 
 
-def download_and_process_p12(path_p12):
+def download_and_process_p12(path_p12, args):
     urls = [
         'https://physionet.org/files/challenge-2012/1.0.0/set-a.tar.gz?download',
         'https://physionet.org/files/challenge-2012/1.0.0/set-b.tar.gz?download',
@@ -118,24 +133,8 @@ def download_and_process_p12(path_p12):
         list_data_df.append(df_p12)
 
     df_p12_data = pd.concat(list_data_df)
-    df_p12_data.to_csv(processed_folder/'p12_data_abc.csv', index=False)
-
-
-def load_p12_tvt(args, path_p12, logger):
-    path_processed = path_p12/"processed"
-    path_raw = path_p12/"raw"
-    if os.path.exists(path_processed/'p12_data_abc.csv') and os.path.exists(path_processed/'p12_labels_abc.csv'):
-        pass
-    else:
-        if os.path.exists(path_raw):
-            shutil.rmtree(path_raw)
-        if os.path.exists(path_processed):
-            shutil.rmtree(path_processed)
-        download_and_process_p12(path_p12)
-
-    data_tvt = pd.read_csv(path_processed/'p12_data_abc.csv', index_col=0)
-
-    return data_tvt
+    df_p12_data = filter_bad_sequences(df_p12_data, args)
+    df_p12_data.to_csv(processed_folder/'p12_data_all.csv', index=False)
 
 
 def read_ehr_forecast_tvt(data_config, args, logger):
@@ -144,16 +143,15 @@ def read_ehr_forecast_tvt(data_config, args, logger):
         path_p12 = root_path/'data/ehr/PhysioNet12'
         path_raw = path_p12/'raw'
         path_processed = path_p12/'processed'
-        if os.path.exists(path_processed/'p12_data_abc.csv'):
+        if os.path.exists(path_processed/'p12_data_all.csv'):
             pass
         else:
             if os.path.exists(path_raw):
                 shutil.rmtree(path_raw)
             if os.path.exists(path_processed):
                 shutil.rmtree(path_processed)
-            download_and_process_p12(path_p12)
-
-        data_tvt = pd.read_csv(path_processed/'p12_data_abc.csv', index_col=0)
+            download_and_process_p12(path_p12, args)
+        data_tvt = pd.read_csv(path_processed/'p12_data_all.csv', index_col=0)
 
     elif data_config["name"] == "eICU":
         data_tvt = pd.read_csv(
@@ -162,26 +160,17 @@ def read_ehr_forecast_tvt(data_config, args, logger):
         # Reassign the time to be the time difference from the first observation
         data_tvt["Time"] = data_tvt.groupby(data_tvt.index)["Time"].transform(
             lambda x: x - x.min())
-        
+
+    elif data_config["name"] == "MIMIC4":
+        data_tvt = pd.read_csv(
+            root_path/'data/ehr/mimic4/processed/mimic4_data.csv', index_col=0)
+        # Take the timestamp of the first observation as the starting point
+        # Reassign the time to be the time difference from the first observation
+        data_tvt["Time"] = data_tvt.groupby(data_tvt.index)["Time"].transform(
+            lambda x: x - x.min())
+
     else:
         raise NotImplementedError
-
-    # Apply some filstering
-    # For Extrap: there are values before and after 24h
-    # For Classf: the patient didn't die within the first 24h
-    ids_before = data_tvt.loc[data_tvt['Time']
-                              < args.next_start].index.unique()
-    ids_after = data_tvt.loc[data_tvt['Time']
-                             > args.next_start].index.unique()
-    ids_selected = set(ids_before) & set(ids_after)
-    data_tvt = data_tvt.loc[list(ids_selected)]
-    # drop admissions which have less than 20 time steps
-    len_counts = data_tvt.index.value_counts()
-    ids_good = len_counts.index[len_counts >= 20]
-    data_tvt = data_tvt.loc[data_tvt.index.isin(ids_good)]
-    # Only extract the data within the max time range
-    if args.time_max < data_tvt['Time'].max():
-        data_tvt = data_tvt.loc[data_tvt['Time'] <= args.time_max]
 
     value_cols = []
     mask_cols = []
@@ -189,7 +178,7 @@ def read_ehr_forecast_tvt(data_config, args, logger):
         value_cols.append(col.startswith("Value"))
         mask_cols.append(col.startswith("Mask"))
 
-    len_max = len_counts.max()
+    len_max = data_tvt.index.value_counts().max()
     data_in = []
     mask_in = []
     time_in = []
