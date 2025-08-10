@@ -66,7 +66,8 @@ def process_spline_data(input_file, output_file,
 
 
 # Usage
-folder_data = Path("/home/xiao/project/UpFlexTSF/data/ltf/illness")
+proj_path = Path(__file__).resolve().parents[2]
+folder_data = proj_path/"data/ltf/illness"
 process_spline_data(
     input_file=folder_data/'national_illness.csv',
     output_file=folder_data/'national_illness_ext.csv',

@@ -27,7 +27,6 @@ class DatasetGP_Monash(Dataset):
     def __getitem__(self, idx):
         # The total length is input length + output length
         # The input length is randomly sampled from [seq_len_min, seq_len_max]
-        # The output length is 1/8 of the input length
         seq_len_max = min(math.floor(
             self.args.seq_len_max * 2), self.data[idx]["len"])
         seq_len_min = math.floor(self.args.seq_len_min * self.args.tir)

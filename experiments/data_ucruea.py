@@ -212,12 +212,6 @@ def collate_fn_forecast_general(batch, args, dataset_config):
         data_dict["mask_last"] = mask_last
         data_dict["mask_out"] = data_dict["mask_out"] * mask_last.unsqueeze(-1)
 
-    # if args.ddr > 0:
-    #     # Generate a mask to randomly drop ddr of the data
-    #     mask_in_drop = mask_random_tensor(data_dict["mask_in"], args.ddr)
-    #     data_dict["mask_in"] = data_dict["mask_in"] * mask_in_drop
-    #     data_dict["data_in"] = data_dict["data_in"] * mask_in_drop
-
     return data_dict
 
 

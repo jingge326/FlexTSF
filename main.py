@@ -14,12 +14,9 @@ parser = argparse.ArgumentParser(
 # Args for the experiment setup
 parser.add_argument("--random_state", type=int, default=1, help="Random seed")
 parser.add_argument("--proj_path", type=str, default=Path(__file__).parents[0])
-parser.add_argument("--test_info", default="test")
+parser.add_argument("--test_info", default="debug")
 parser.add_argument("--version", default="v1")
-parser.add_argument("--base_model", default="flextsf",
-                    choices=["flextsf", "flextsfab"])
-parser.add_argument("--model_type", default="initialize",
-                    choices=["initialize", "reconstruct"])
+parser.add_argument("--base_model", default="flextsf")
 parser.add_argument("--exp_name", type=str, default="")
 parser.add_argument("--ml_task", default="uni_pretrain",
                     choices=["uni_pretrain", "forecast"])
@@ -33,6 +30,10 @@ parser.add_argument("--few_shot_config", type=float, default=1.0)
 parser.add_argument("--ckpt_path", type=str, default="")
 parser.add_argument("--zeroshot_epoch", type=int, default=1,
                     help="Ranging from 0 to the epochs_max of pretraining")
+parser.add_argument("--ze_max", default=-1, type=int,
+                    help="The max epoch for zero-shot")
+parser.add_argument("--record_forecasts", action='store_true')
+parser.add_argument("--fore_len", type=int, default=0)
 
 # Args for the training process
 parser.add_argument("--dev_mode", default="debug",
@@ -56,14 +57,15 @@ parser.add_argument("--clip", type=float, default=1)
 parser.add_argument("--beta1", type=float, default=0.9)
 parser.add_argument("--beta2", type=float, default=0.95)
 parser.add_argument("--warmup_steps", type=int, default=1000)
-parser.add_argument("--log_tool", default="wandb",
+parser.add_argument("--log_tool", default="logging",
                     choices=["logging", "wandb", "all"])
 parser.add_argument("--pre_model", default="")
 parser.add_argument("--test_info_pt", default="")
+parser.add_argument("--max_batch_size", type=int, default=64)
 
 # Args for datasets
-parser.add_argument("--data_group", default="all",
-                    choices=["all", "regular", "irregular"])
+parser.add_argument("--data_group", default="irregular",
+                    choices=["regular", "irregular"])
 parser.add_argument("--data_name", default="",
                     help="Dataset name. Options are in model_task_data_config. If empty, use data_group")
 parser.add_argument("--var_num", type=int, default=1)
@@ -72,17 +74,23 @@ parser.add_argument("--debug_portion", type=float, default=-1)
 parser.add_argument("--max_seq_length", type=int, default=1000)
 parser.add_argument("--t_v_split", type=float, default=0.8)
 parser.add_argument("--forecast_ratio", default=0.2, type=float)
-parser.add_argument("--ltf_input_len", type=int, default=0)
-parser.add_argument("--ltf_pred_len", type=int, default=0)
-parser.add_argument("--ltf_features", default="M", choices=["M", "S", "MS"])
-parser.add_argument("--timeenc", type=int, default=1, choices=[0, 1])
-parser.add_argument('--ltf_freq', type=str, default='h',
-                    help='freq for time features encoding')
+parser.add_argument("--len_input", type=int, default=96)
+parser.add_argument("--len_forecast", type=int, default=0)
 parser.add_argument("--full_regular", action='store_true')
-parser.add_argument("--next-start", type=float, default=1440)
-parser.add_argument("--time-max", type=int, default=2880)
+parser.add_argument("--len_last", type=int, default=0)
+parser.add_argument("--test_last", action='store_true')
+parser.add_argument("--irreg_seq_len_max", type=int, default=0)
+parser.add_argument("--ltf_features", default="M", choices=["M", "S", "MS"])
+parser.add_argument("--ddr", type=float, default=-1,
+                    help="Data drop rate for irregular data")
+parser.add_argument("--ddr_out", type=float, default=-1,
+                    help="Data drop rate for irregular data")
+parser.add_argument("--tir", type=float, default=1.5,
+                    help="Total/input length ratio for generating training samples. Default 1.5 is 3/2")
+parser.add_argument("--seq_len_min", type=int, default=12)
+parser.add_argument("--seq_len_max", type=int, default=512)
 
-###### Args for the FlexTSF model ######
+###### Args for FlexTSF ######
 # Args for IVP Patcher
 parser.add_argument("--ivp_solver", default="resnetflow",
                     choices=["resnetflow", "couplingflow", "gruflow", "ode"])
@@ -110,8 +118,16 @@ parser.add_argument("--time_net", type=str, default="TimeTanh", help="Name of ti
                     choices=["TimeFourier", "TimeFourierBounded", "TimeLinear", "TimeTanh"])
 parser.add_argument("--time_hidden_dim", type=int, default=8,
                     help="Number of time features (only for Fourier)")
+parser.add_argument("--ivp_invertible", action='store_false')
 parser.add_argument("--patch_overlap_rate", default=0,
                     type=float, choices=[0.5, 0.25, 0])
+parser.add_argument("--patch_seg", default="deterministic",
+                    choices=["random", "deterministic", "given"])
+parser.add_argument("--patch_len_vali", default="weighted_average",
+                    choices=["best", "average", "weighted_average"])
+parser.add_argument("--largest_patch_len", type=int, default=16)
+parser.add_argument("--smallest_patch_len", type=int, default=1)
+parser.add_argument("--dim_patch_ts", type=int, default=64)
 
 # Args for the VAE framework
 parser.add_argument("--k_iwae", type=int, default=3)
@@ -120,37 +136,43 @@ parser.add_argument("--prior_mu", type=float, default=0.0)
 parser.add_argument("--prior_std", type=float, default=1.0)
 parser.add_argument("--obsrv_std", type=float, default=0.01)
 parser.add_argument("--combine_methods", default="kl_weighted",
-                    choices=["average", "kl_weighted"])
-parser.add_argument("--kl_alles", action='store_false')
+                    choices=["average", "kl_weighted", "flatten"])
+parser.add_argument("--coding_loss", default="input", choices=["input", "all"])
 
 # Args for the Attention mechanism
 parser.add_argument("--nhead", type=int, default=4,
                     help="number of heads in multihead-attention")
-parser.add_argument("--dropout", type=float, default=0.2,
+parser.add_argument("--n_embd", type=int, default=64)
+parser.add_argument("--attn_architecture", default="dec", choices=[
+                    "dec", "enc"], help="Attention architecture: decoder-only or encoder-only")
+parser.add_argument("--dropout", type=float, default=0.1,
                     help="Specifies a layer-wise dropout factor")
 parser.add_argument("--embed_time", type=int, default=128,
                     help="Time embedding size")
 parser.add_argument("--attn_layers", type=int, default=2)
 parser.add_argument("--dim_attn_internal", type=int, default=64)
-parser.add_argument("--seq_len_min", type=int, default=16)
-parser.add_argument("--seq_len_max", type=int, default=512)
-parser.add_argument("--dim_patch_ts", type=int, default=64)
-parser.add_argument("--max_batch_size", type=int, default=64)
-parser.add_argument("--max_seq_len", type=int, default=512)
+parser.add_argument("--cache_seq_len", type=int, default=1025)
 parser.add_argument("--norm_eps", type=float, default=1e-5)
 parser.add_argument("--freqs_theta", type=float, default=10000.0)
 parser.add_argument("--multiple_of", type=int, default=256)
 parser.add_argument("--dummy_type", choices=["zero", "detach", "clone"],
                     default="clone")
+parser.add_argument("--ratio_il", type=float, default=0.1)
+parser.add_argument("--ar_gen_way", choices=["simul", "seq"], default="simul")
+parser.add_argument("--ar_in_pads", action='store_true')
+parser.add_argument("--ffn_expansion", type=int, default=4)
 
 # Args for the Abalation Study
-parser.add_argument("--patch_module", default="ivp", choices=["ivp", "none"])
-parser.add_argument("--fixed_patch_len", action='store_true')
+parser.add_argument("--patch_module", default="ivp",
+                    choices=["ivp", "none"])
 parser.add_argument("--leader_node", action='store_false')
 parser.add_argument("--lyr_time_embed", action='store_false')
 parser.add_argument("--dummy_patch", action='store_false')
-parser.add_argument("--vt_norm", action='store_false')
+parser.add_argument("--time_norm", action='store_true')
 parser.add_argument("--time_norm_affine", action='store_true')
+parser.add_argument("--value_norm", action='store_true')
+parser.add_argument(
+    "--v_norm_type", choices=["standard", "maxmin"], default="standard")
 
 
 if __name__ == "__main__":

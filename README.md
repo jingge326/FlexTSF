@@ -17,13 +17,13 @@ Recently, there has been significant research on universal time series forecasti
 We illustrate temporal irregularity in the following figure. (a) shows regularly sampled data; (b) depicts missing data due to events like holidays; (c) presents blood pressure measurements becoming denser as a patient's condition worsens; (d) shows irregular satellite observations influenced by atmospheric conditions such as clouds and fog.
 
 <p align="center">
-    <img src="images/temporal_irregularity.png" width="740" align="center">
+    <img src="images/temporal_irregularity.png" width="750" align="center">
 </p>
 
 We propose **FlexTSF**, a flexible time series forecasting model that not only performs well on data with temporal irregularity but is also broadly applicable across domains with various temporal granularities. As shown in the following figure, FlexTSF employs a decoder-only architecture, where time series input data is organized into patches. Previously observed patches attend to the generation of future patches, which are then transformed into forecasts. Built on this backbone, FlexTSF introduces a novel patching module and a domain self-adaptation mechanism.
 
 <p align="center">
-    <img src="images/FlexTSF.png" width="740" align="center">
+    <img src="images/FlexTSF.png" width="750" align="center">
 </p>
 
 Specifically,
@@ -63,7 +63,7 @@ After processing, $\mathcal{D}_{p}$ consists of 2.4 million sequences with lengt
 
 - **Obtain**: They are from the [Long Time Series Forecasting Benchmark](https://github.com/thuml/Autoformer).
 
-- **Preprocess**: No preprocessing is required, the data can be read directly by the function in file "_experiments/data_ltf.py_".
+- **Preprocess**: The illness dataset was extended so that it supports the same input/output data length as the other datasets. No preprocessing is required for the others. The data can be read directly by the function in file "_experiments/data_ltf.py_".
 
 #### SaTSM
 
