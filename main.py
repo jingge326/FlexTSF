@@ -14,7 +14,7 @@ parser = argparse.ArgumentParser(
 # Args for the experiment setup
 parser.add_argument("--random_state", type=int, default=1, help="Random seed")
 parser.add_argument("--proj_path", type=str, default=Path(__file__).parents[0])
-parser.add_argument("--test_info", default="debug")
+parser.add_argument("--test_info", default="test")
 parser.add_argument("--version", default="v1")
 parser.add_argument("--base_model", default="flextsf")
 parser.add_argument("--exp_name", type=str, default="")
@@ -36,14 +36,14 @@ parser.add_argument("--record_forecasts", action='store_true')
 parser.add_argument("--fore_len", type=int, default=0)
 
 # Args for the training process
-parser.add_argument("--dev_mode", default="debug",
+parser.add_argument("--dev_mode", default="run",
                     choices=["debug", "run", "resume", "spec_gpu"])
 parser.add_argument("--num_dl_workers", type=int, default=2)
 parser.add_argument("--device", type=str, default="cuda:0")
 parser.add_argument("--epochs_min", type=int, default=1)
 parser.add_argument("--epochs_max", type=int, default=1000,
                     help="Max training epochs")
-parser.add_argument("--patience", type=int, default=5,
+parser.add_argument("--patience", type=int, default=10,
                     help="Early stopping patience")
 parser.add_argument("--weight_decay", type=float,
                     default=0.0001, help="Weight decay (regularization)")
@@ -60,7 +60,7 @@ parser.add_argument("--warmup_steps", type=int, default=1000)
 parser.add_argument("--log_tool", default="logging",
                     choices=["logging", "wandb", "all"])
 parser.add_argument("--pre_model", default="")
-parser.add_argument("--test_info_pt", default="")
+parser.add_argument("--test_info_pt", default="test")
 parser.add_argument("--max_batch_size", type=int, default=64)
 
 # Args for datasets
@@ -82,9 +82,9 @@ parser.add_argument("--test_last", action='store_true')
 parser.add_argument("--irreg_seq_len_max", type=int, default=0)
 parser.add_argument("--ltf_features", default="M", choices=["M", "S", "MS"])
 parser.add_argument("--ddr", type=float, default=-1,
-                    help="Data drop rate for irregular data")
+                    help="Data dropout rate for input sequences")
 parser.add_argument("--ddr_out", type=float, default=-1,
-                    help="Data drop rate for irregular data")
+                    help="Data dropout rate for output sequences")
 parser.add_argument("--tir", type=float, default=1.5,
                     help="Total/input length ratio for generating training samples. Default 1.5 is 3/2")
 parser.add_argument("--seq_len_min", type=int, default=12)

@@ -12,26 +12,9 @@
         "--ml_task",
         "forecast",
         "--value_norm",
-        "--time_norm"
-      ],
-      "console": "integratedTerminal"
-    },
-    {
-      "name": "FlexTSF-Forecast-RPLW",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${workspaceFolder}/main.py",
-      "args": [
-        "--base_model",
-        "flextsf",
-        "--ml_task",
-        "forecast",
-        "--value_norm",
         "--time_norm",
         "--patch_seg",
-        "random",
-        "--patience",
-        "10"
+        "random"
       ],
       "console": "integratedTerminal"
     },
@@ -97,9 +80,7 @@
         "--zeroshot_epoch",
         "5",
         "--fore_len",
-        "0.25",
-        "--test_info_pt",
-        "debug"
+        "0.25"
       ],
       "console": "integratedTerminal"
     },
@@ -120,7 +101,7 @@
         "--train_setting",
         "few",
         "--pre_model",
-        "temp/uni_pretrain_flextsf_nembd768_nhead12_nlyrs6_True_ivp_True_v1_debug_r1_epoch_19.ckpt",
+        "temp/uni_pretrain_flextsf_nembd768_nhead12_nlyrs6_True_ivp_True_v1_test_r1_epoch_19.ckpt",
         "--attn_layers",
         "6",
         "--nhead",

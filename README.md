@@ -20,7 +20,7 @@ We illustrate temporal irregularity in the following figure. (a) shows regularly
     <img src="images/temporal_irregularity.png" width="750" align="center">
 </p>
 
-We propose **FlexTSF**, a flexible time series forecasting model that not only performs well on data with temporal irregularity but is also broadly applicable across domains with various temporal granularities. As shown in the following figure, FlexTSF employs a decoder-only architecture, where time series input data is organized into patches. Previously observed patches attend to the generation of future patches, which are then transformed into forecasts. Built on this backbone, FlexTSF introduces a novel patching module and a domain self-adaptation mechanism.
+We propose **FlexTSF**, the first universal forecasting model built from the perspective of breaking data regularity constraints. FlexTSF not only performs well on data with temporal irregularity but is also broadly applicable across domains with various temporal granularities. As shown in the following figure, FlexTSF employs a decoder-only architecture, where time series input data is organized into patches. Previously observed patches attend to the generation of future patches, which are then transformed into forecasts. Built on this backbone, FlexTSF introduces a novel patching module and a domain self-adaptation mechanism.
 
 <p align="center">
     <img src="images/FlexTSF.png" width="750" align="center">
@@ -63,7 +63,7 @@ After processing, $\mathcal{D}_{p}$ consists of 2.4 million sequences with lengt
 
 - **Obtain**: They are from the [Long Time Series Forecasting Benchmark](https://github.com/thuml/Autoformer).
 
-- **Preprocess**: The illness dataset was extended so that it supports the same input/output data length as the other datasets. No preprocessing is required for the others. The data can be read directly by the function in file "_experiments/data_ltf.py_".
+- **Preprocess**: The illness dataset was extended (_preprocess/pre_ltf_) so that it supports the same input/output data length as the other datasets. No preprocessing is required for the others. The data can be read directly by the function in file "_experiments/data_ltf.py_".
 
 #### SaTSM
 
@@ -79,7 +79,7 @@ After processing, $\mathcal{D}_{p}$ consists of 2.4 million sequences with lengt
 
 #### ArabDigit, CharTraj
 
-- **Obtain**: They are from the [UEA Time Series Classification Archive](https://www.timeseriesclassification.com/) and have been removed from $\mathcal{D}_{p}$ to ensure that there are no overlaps between $\mathcal{D}_{p}$ and $\mathcal{D}_{h}$.
+- **Obtain**: They are from the [UEA Time Series Classification Archive](https://www.timeseriesclassification.com/) and have been removed from the pre-training set to ensure no overlap between the pre-training set and the held-out set.
 
 - **Preprocess**: No preprocessing is required, the data can be read directly by the function in file "_experiments/data_ucruea.py_".
 
@@ -109,7 +109,7 @@ After processing, $\mathcal{D}_{p}$ consists of 2.4 million sequences with lengt
 
 ## 3. Experiments
 
-In the first stage, we perform [classic](#classic-training) training-validation-testing experiments on $\mathcal{D}_{h}$ to demonstrate the effectiveness of FlexTSF. Next, we [pre-train](#pre-training) FlexTSF on $\mathcal{D}_{p}$, yielding a pre-trained model with 63 million parameters. This model is initially used to perform [zero-shot](#zero-shot) forecasts on the test partition of $\mathcal{D}_{h}$, evaluating its potential as a foundation model, and then fine-tuned on $\mathcal{D}_{h}$ for time series forecasting, assessing its adaptability to new domains in [few-shot](#few-shot) scenarios.
+In the first stage, we perform [classic](#classic-training) training-validation-testing experiments to demonstrate the effectiveness of FlexTSF. Next, we [pre-train](#pre-training) FlexTSF, resulting in a model with 63 million parameters. This model is initially used for [zero-shot](#zero-shot) forecasting to evaluate its potential as a universal model, and is then fine-tuned for time series forecasting to assess its adaptability to new domains in [few-shot](#few-shot) scenarios.
 
 Each dataset in $\mathcal{D}_{h}$ is split into training, validation, and testing sets, following their original splits if known or a split ratio of 8:1:1, otherwise.
 
@@ -124,13 +124,19 @@ You can use the following commands to run the program. VS Code users can also ch
 Run FlexTSF on a specific dataset:
 
 ```
-python main.py --base_model flextsf --ml_task forecast --data_name exchange_rate
+python main.py --base_model flextsf --ml_task forecast --value_norm --time_norm --patch_seg random --data_name eICU
 ```
 
-Run FlexTSF on all 12 datasets:
+Run FlexTSF on all irregular datasets:
 
 ```
-python main.py --base_model flextsf --ml_task forecast
+python main.py --base_model flextsf --ml_task forecast --value_norm --time_norm --patch_seg random --data_group irregular
+```
+
+Run FlexTSF on all regular datasets with 20% missing rate:
+
+```
+python main.py --base_model flextsf --ml_task forecast --value_norm --time_norm --patch_seg random --data_group regular --ddr 0.2
 ```
 
 ### 3.2 Pre-training
@@ -138,69 +144,69 @@ python main.py --base_model flextsf --ml_task forecast
 Pre-train FlexTSF:
 
 ```
-python main.py --base_model flextsf --data_name monash --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --ml_task uni_pretrain --weight_decay 0.1 --epochs_max 20 --dev_mode run
+python main.py --base_model flextsf --data_name monash --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --ml_task uni_pretrain --value_norm --time_norm --weight_decay 0.1 --epochs_max 20 --dev_mode run
 ```
 
 ### 3.3 Zero-shot
 
-Deploy pre-trained FlexTSF on all datasets in the zero-shot setting:
+Deploy pre-trained FlexTSF in zero-shot settings:
 
 ```
-python main.py --base_model flextsf --ml_task forecast --train_setting zero --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --pre_random_seed 1 --zeroshot_epoch 1
+python main.py --base_model flextsf --ml_task forecast --value_norm --time_norm --train_setting zero --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --pre_random_seed 1 --zeroshot_epoch 5 --fore_len 0.25
 ```
 
-`--zeroshot_epoch 1`: We use the model that has been trained for 2 epochs.
+`--zeroshot_epoch 5`: We use the model that has been trained for 6 epochs.
 
 ### 3.4 Few-shot
 
-Deploy pre-trained FlexTSF on all datasets in the few-shot setting with 250 fine-tuning samples:
+Deploy pre-trained FlexTSF in the few-shot setting with 50 fine-tuning samples:
 
 ```
-python main.py --base_model flextsf --ml_task forecast --model_type reconstruct --train_setting few --pre_model {patch_ckpt} --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --pre_random_seed 1 --few_shot_config 250
+python main.py --base_model flextsf --model_type reconstruct --ml_task forecast --value_norm --time_norm --train_setting few --pre_model {patch_ckpt} --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --pre_random_seed 1 --few_shot_config 50 --fore_len 0.25
 ```
 
 `{patch_ckpt}` specifies the path of the checkpoint. We used the model that had been trained for 20 epochs.
 
 ### 3.5 Ablation Study
 
-#### 3.5.1 Without VT-Norm
+#### 3.5.1 Without IVP Patcher
 
 Pre-train the model:
 
 ```
-python main.py --base_model flextsf --ml_task uni_pretrain --data_name monash --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --leader_node --weight_decay 0.1 --epochs_max 20 --dev_mode run --test_info nonorm
+python main.py --base_model flextsf --data_name monash --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --ml_task uni_pretrain --value_norm --time_norm --patch_module none --patch_len_pretrain 1 --batch_size 16 --weight_decay 0.1 --epochs_max 20
 ```
 
 Run zero-shot experiments:
 
 ```
-python main.py --base_model flextsf --ml_task forecast --train_setting zero --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --leader_node --pre_random_seed 1 --zeroshot_epoch 1 --test_info nonorm
+python main.py --base_model flextsf --ml_task forecast --value_norm --time_norm --train_setting zero --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --patch_module none --patch_seg given --patch_len 1 --pre_random_seed 1 --zeroshot_epoch 5 --fore_len 0.25
 ```
 
-#### 3.5.2 Without IVP Patcher
+#### 3.5.2 Without the time normalization
 
 Pre-train the model:
 
 ```
-python main.py --base_model flextsf --ml_task uni_pretrain --data_name monash --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --weight_decay 0.1 --epochs_max 20 --dev_mode run --fixed_patch_len --patch_len 1 --patch_len_pretrain 1 --cache_seq_len 520 --seq_len_max 200 --patch_module none --test_info nopatcher
+python main.py --base_model flextsf --data_name monash --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --ml_task uni_pretrain --value_norm --weight_decay 0.1 --epochs_max 20
 ```
 
 Run zero-shot experiments:
 
 ```
-python main.py --base_model flextsf --ml_task forecast --train_setting zero --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --pre_random_seed 1 --zeroshot_epoch 1 --fixed_patch_len --patch_len 1 --patch_len_pretrain 1 --cache_seq_len 520 --seq_len_max 200 --patch_module none --test_info nopatcher
+python main.py --base_model flextsf --ml_task forecast --value_norm --train_setting zero --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --pre_random_seed 1 --zeroshot_epoch 5 --fore_len 0.25
 ```
 
-#### 3.5.3 Without LED Attention
+#### 3.5.3 Without the Leader node
 
 Pre-train the model:
 
 ```
-python main.py --base_model flextsf --ml_task uni_pretrain --data_name monash --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --leader_node --dummy_patch --lyr_time_embed --weight_decay 0.1 --epochs_max 20 --dev_mode run --test_info noled
+python main.py --base_model flextsf --data_name monash --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --ml_task uni_pretrain --value_norm --time_norm --leader_node --weight_decay 0.1 --epochs_max 20
 ```
 
 Run zero-shot experiments:
 
 ```
-python main.py --base_model flextsf --ml_task forecast --train_setting zero --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --pre_random_seed 1 --zeroshot_epoch 1 --leader_node --dummy_patch --lyr_time_embed --test_info noled
+python main.py --base_model flextsf --ml_task forecast --value_norm --time_norm --train_setting zero --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --pre_random_seed 1 --leader_node --zeroshot_epoch 5 --fore_len 0.25
 ```
