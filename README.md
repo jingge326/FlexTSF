@@ -1,5 +1,9 @@
 # FlexTSF: A Flexible Forecasting Model for Time Series with Variable Regularities
 
+**Accepted by IEEE Transactions on Knowledge and Data Engineering (TKDE), 2026.**
+
+📄 **Paper:** [IEEE Xplore](https://doi.org/10.1109/TKDE.2026.3732095)
+
 ## Overview
 
 This is the official PyTorch implementation of the paper **FlexTSF: A Flexible Forecasting Model for Time Series with Variable Regularities**.
@@ -109,7 +113,7 @@ After processing, $\mathcal{D}_{p}$ consists of 2.4 million sequences with lengt
 
 ## 3. Experiments
 
-In the first stage, we perform [classic](#classic-training) training-validation-testing experiments to demonstrate the effectiveness of FlexTSF. Next, we [pre-train](#pre-training) FlexTSF, resulting in a model with 63 million parameters. This model is initially used for [zero-shot](#zero-shot) forecasting to evaluate its potential as a universal model, and is then fine-tuned for time series forecasting to assess its adaptability to new domains in [few-shot](#few-shot) scenarios.
+In the first stage, we perform [classic](#31-classic-training) training-validation-testing experiments to demonstrate the effectiveness of FlexTSF. Next, we [pre-train](#pre-training) FlexTSF, resulting in a model with 63 million parameters. This model is initially used for [zero-shot](#zero-shot) forecasting to evaluate its potential as a universal model, and is then fine-tuned for time series forecasting to assess its adaptability to new domains in [few-shot](#few-shot) scenarios.
 
 Each dataset in $\mathcal{D}_{h}$ is split into training, validation, and testing sets, following their original splits if known or a split ratio of 8:1:1, otherwise.
 
@@ -209,4 +213,18 @@ Run zero-shot experiments:
 
 ```
 python main.py --base_model flextsf --ml_task forecast --value_norm --time_norm --train_setting zero --attn_layers 6 --nhead 12 --dim_attn_internal 768 --dim_patch_ts 768 --dim_ivp_hidden 768 --pre_random_seed 1 --leader_node --zeroshot_epoch 5 --fore_len 0.25
+```
+
+## Citation
+
+If you find FlexTSF useful in your research, please consider citing our paper:
+
+```bibtex
+@article{xiao2026flextsf,
+  title={FlexTSF: A Flexible Forecasting Model for Time Series with Variable Regularities},
+  author={Xiao, Jingge and Chen, Yile and Cong, Gao and Nejdl, Wolfgang and Gottschalk, Simon},
+  journal={IEEE Transactions on Knowledge and Data Engineering},
+  year={2026},
+  doi={10.1109/TKDE.2026.3732095}
+}
 ```
